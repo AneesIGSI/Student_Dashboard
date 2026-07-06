@@ -1,0 +1,2470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hum Hain Pakistan | SDG Youth Campaign Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=Georgia&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+:root{
+  --forest:#185D35;
+  --forest-dark:#0F3F24;
+  --forest-tint:#E7F0EA;
+  --gold:#ECC070;
+  --gold-dark:#C99A3E;
+  --cream:#FAF7EF;
+  --ink:#1E2B22;
+  --slate:#5B6B60;
+  --line:#DCE3D6;
+  --white:#FFFFFF;
+  --danger:#A6402B;
+  --danger-tint:#F7E9E4;
+  --success:#2E7D4F;
+  --radius:14px;
+  --shadow:0 2px 10px rgba(24,93,53,0.08), 0 1px 2px rgba(24,93,53,0.06);
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background:var(--cream);
+  color:var(--ink);
+  font-family:'Inter',system-ui,sans-serif;
+  min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,h4{font-family:'Poppins',system-ui,sans-serif; margin:0 0 6px 0; color:var(--forest-dark);}
+p{margin:0 0 12px 0; line-height:1.55; color:var(--ink);}
+a{color:var(--forest);}
+button{font-family:inherit;}
+
+/* ---------- App shell ---------- */
+.topbar{
+  background:linear-gradient(135deg,var(--forest) 0%, var(--forest-dark) 100%);
+  color:var(--white);
+  padding:16px 28px;
+  display:flex; align-items:center; justify-content:space-between;
+  box-shadow:var(--shadow);
+  position:sticky; top:0; z-index:50;
+}
+.brand{display:flex; align-items:center; gap:12px;}
+.brand-mark{width:40px; height:40px; flex-shrink:0;}
+.brand-text .title{font-family:'Poppins'; font-weight:700; font-size:17px; letter-spacing:.2px;}
+.brand-text .subtitle{font-size:11.5px; color:var(--gold); font-weight:600; letter-spacing:.6px; text-transform:uppercase;}
+.role-pill{
+  background:rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.25);
+  color:var(--white); padding:6px 14px; border-radius:999px; font-size:12.5px; font-weight:600;
+  display:flex; align-items:center; gap:8px;
+}
+.role-pill button{
+  background:var(--gold); color:var(--forest-dark); border:none; padding:5px 12px;
+  border-radius:999px; font-weight:700; font-size:11.5px; cursor:pointer;
+}
+.role-pill button:hover{background:var(--gold-dark); color:var(--white);}
+
+.shell{max-width:1180px; margin:0 auto; padding:32px 24px 64px;}
+.view{display:none;}
+.view.active{display:block; animation:fadein .35s ease;}
+@keyframes fadein{from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:translateY(0);}}
+
+/* ---------- Cards / layout ---------- */
+.card{
+  background:var(--white); border:1px solid var(--line); border-radius:var(--radius);
+  padding:26px 28px; box-shadow:var(--shadow); margin-bottom:22px;
+}
+.card-tight{padding:18px 20px;}
+.grid{display:grid; gap:20px;}
+.grid-2{grid-template-columns:repeat(2,1fr);}
+.grid-3{grid-template-columns:repeat(3,1fr);}
+.grid-4{grid-template-columns:repeat(4,1fr);}
+@media(max-width:820px){.grid-2,.grid-3,.grid-4{grid-template-columns:1fr;}}
+
+.eyebrow{
+  text-transform:uppercase; letter-spacing:1.2px; font-size:11.5px; font-weight:700;
+  color:var(--gold-dark); margin-bottom:8px; display:block;
+}
+
+/* ---------- Buttons / inputs ---------- */
+.btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  background:var(--forest); color:var(--white); border:none; padding:12px 22px;
+  border-radius:10px; font-weight:600; font-size:14.5px; cursor:pointer; transition:.15s ease;
+}
+.btn:hover{background:var(--forest-dark);}
+.btn:disabled{background:#B7C4BB; cursor:not-allowed;}
+.btn-gold{background:var(--gold); color:var(--forest-dark);}
+.btn-gold:hover{background:var(--gold-dark); color:var(--white);}
+.btn-outline{background:transparent; color:var(--forest); border:1.5px solid var(--forest);}
+.btn-outline:hover{background:var(--forest-tint);}
+.btn-danger{background:var(--danger); color:var(--white);}
+.btn-danger:hover{background:#832F20;}
+.btn-block{width:100%;}
+.btn-row{display:flex; gap:12px; flex-wrap:wrap; margin-top:18px;}
+
+label{display:block; font-size:13px; font-weight:600; color:var(--forest-dark); margin:14px 0 6px;}
+label:first-child{margin-top:0;}
+input[type=text],input[type=password],input[type=number],select,textarea{
+  width:100%; padding:11px 13px; border:1.5px solid var(--line); border-radius:9px;
+  font-size:14.5px; font-family:inherit; background:var(--white); color:var(--ink);
+}
+input:focus,select:focus,textarea:focus{outline:none; border-color:var(--forest);}
+.field-hint{font-size:12px; color:var(--slate); margin-top:4px;}
+.error-box{
+  background:var(--danger-tint); color:var(--danger); border:1px solid #E7C7BC;
+  padding:11px 14px; border-radius:99px; font-size:13.5px; font-weight:600; margin-top:10px;
+}
+
+/* ---------- Impact ring (signature element) ---------- */
+.ring-wrap{display:flex; align-items:center; gap:22px; flex-wrap:wrap;}
+.ring-score{font-family:'Poppins'; font-weight:800; font-size:26px; fill:var(--forest-dark);}
+
+/* ---------- Tables ---------- */
+table{width:100%; border-collapse:collapse; font-size:13.5px;}
+th{
+  text-align:left; padding:10px 12px; background:var(--forest-tint); color:var(--forest-dark);
+  font-family:'Poppins'; font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.4px;
+  border-bottom:2px solid var(--line);
+}
+td{padding:10px 12px; border-bottom:1px solid var(--line); color:var(--ink);}
+tr:hover td{background:#FBFDFA;}
+.table-wrap{overflow-x:auto; border-radius:10px; border:1px solid var(--line);}
+.table-wrap table{border-radius:10px;}
+.badge{display:inline-block; padding:3px 10px; border-radius:999px; font-size:11.5px; font-weight:700;}
+.badge-pass{background:#E4F3E9; color:var(--success);}
+.badge-fail{background:var(--danger-tint); color:var(--danger);}
+.badge-neutral{background:var(--forest-tint); color:var(--forest-dark);}
+
+/* ---------- Stat tiles ---------- */
+.stat-tile{
+  background:var(--white); border:1px solid var(--line); border-radius:var(--radius);
+  padding:20px 22px; box-shadow:var(--shadow);
+}
+.stat-tile .num{font-family:'Poppins'; font-size:30px; font-weight:800; color:var(--forest-dark);}
+.stat-tile .label{font-size:12.5px; color:var(--slate); font-weight:600; text-transform:uppercase; letter-spacing:.4px;}
+.stat-tile.gold .num{color:var(--gold-dark);}
+
+/* ---------- Progress bar ---------- */
+.pbar{height:9px; background:var(--forest-tint); border-radius:999px; overflow:hidden;}
+.pbar > div{height:100%; background:var(--forest); border-radius:999px; transition:width .4s ease;}
+
+/* ---------- Quiz / survey ---------- */
+.q-block{padding:18px 0; border-bottom:1px solid var(--line);}
+.q-block:last-child{border-bottom:none;}
+.q-num{color:var(--gold-dark); font-weight:800; font-family:'Poppins'; font-size:13px; margin-bottom:4px; display:block;}
+.q-text{font-size:15px; font-weight:600; margin-bottom:12px; color:var(--forest-dark);}
+.opt{
+  display:flex; align-items:center; gap:10px; padding:10px 14px; border:1.5px solid var(--line);
+  border-radius:99px; margin-bottom:8px; cursor:pointer; transition:.12s ease;
+}
+.opt:hover{border-color:var(--gold);}
+.opt.selected{border-color:var(--forest); background:var(--forest-tint);}
+.opt input{margin:0;}
+.likert-row{display:flex; gap:8px; flex-wrap:wrap;}
+.likert-opt{
+  flex:1; min-width:80px; text-align:center; padding:10px 6px; border:1.5px solid var(--line);
+  border-radius:9px; cursor:pointer; font-size:12px; font-weight:600; color:var(--slate);
+}
+.likert-opt.selected{border-color:var(--forest); background:var(--forest); color:var(--white);}
+.section-tag{
+  display:inline-block; background:var(--gold); color:var(--forest-dark); font-weight:700;
+  font-size:11px; text-transform:uppercase; letter-spacing:.5px; padding:4px 10px; border-radius:6px; margin-bottom:14px;
+}
+
+/* ---------- Certificate ---------- */
+.cert-outer{display:flex; justify-content:center; padding:20px 0;}
+.cert-page{
+  width:1123px; height:794px;
+  background:var(--white);
+  position:relative;
+  box-shadow:0 8px 30px rgba(0,0,0,0.18);
+  font-family:Georgia, 'Times New Roman', serif;
+}
+.cert-inner{
+  position:absolute; top:24px; left:24px; right:24px; bottom:24px;
+  border:3px solid var(--forest);
+  padding:16px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;
+}
+.cert-inner:before{
+  content:""; position:absolute; top:10px; left:10px; right:10px; bottom:10px;
+  border:1.5px solid var(--gold);
+}
+.cert-eyebrow{color:var(--gold-dark); letter-spacing:3px; font-size:13px; font-weight:bold; text-transform:uppercase; margin-bottom:6px;}
+.cert-title{color:var(--forest-dark); font-size:40px; font-weight:bold; margin:2px 0 4px;}
+.cert-sub{color:var(--slate); font-size:14px; margin-bottom:22px; font-style:italic;}
+.cert-name{font-size:32px; color:var(--forest); border-bottom:2px solid var(--gold); padding:0 30px 6px; margin-bottom:14px; font-weight:bold;}
+.cert-body{max-width:640px; font-size:14.5px; color:var(--ink); line-height:1.7; margin-bottom:20px;}
+.cert-body b{color:var(--forest-dark);}
+.cert-footer{display:flex; justify-content:space-between; width:80%; margin-top:10px;}
+.cert-footer .sig{text-align:center; font-size:12px; color:var(--slate);}
+.cert-footer .sig .line{border-top:1.5px solid var(--ink); width:170px; margin-bottom:6px;}
+.cert-seal{position:absolute; bottom:26px; right:40px; width:76px; height:76px; opacity:.92;}
+
+/* ---------- Role Select Grid ---------- */
+.role-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:18px; margin-top:10px;}
+@media(max-width:900px){.role-grid{grid-template-columns:repeat(2,1fr);}}
+.role-card{
+  background:var(--white); border:1px solid var(--line); border-radius:var(--radius);
+  padding:24px 20px; text-align:left; cursor:pointer; transition:.18s ease; box-shadow:var(--shadow);
+}
+.role-card:hover{border-color:var(--gold); transform:translateY(-3px);}
+.role-card .icon{width:38px; height:38px; margin-bottom:14px;}
+.role-card h3{font-size:16px; margin-bottom:6px;}
+.role-card p{font-size:13px; color:var(--slate); margin:0;}
+.hero{text-align:center; padding:38px 20px 8px;}
+.hero h1{font-size:32px; margin-bottom:10px;}
+.hero p.lead{max-width:560px; margin:0 auto 26px; color:var(--slate); font-size:15.5px;}
+
+/* ---------- Misc ---------- */
+.muted{color:var(--slate); font-size:13.5px;}
+.flex-between{display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;}
+.tag-key{
+  font-family:monospace; background:var(--forest-tint); color:var(--forest-dark); padding:6px 10px;
+  border-radius:6px; font-weight:700; letter-spacing:1px; font-size:14px;
+}
+.back-link{cursor:pointer; color:var(--forest); font-weight:600; font-size:13.5px; display:inline-flex; align-items:center; gap:5px; margin-bottom:18px;}
+.back-link:hover{text-decoration:underline;}
+.chart-box{position:relative; height:260px;}
+.pill-tabs{display:flex; gap:8px; margin-bottom:20px; flex-wrap:wrap;}
+.pill-tab{
+  padding:8px 16px; border-radius:999px; border:1.5px solid var(--line); font-size:13px; font-weight:600;
+  color:var(--slate); cursor:pointer; background:var(--white);
+}
+.pill-tab.active{background:var(--forest); color:var(--white); border-color:var(--forest);}
+/* ---------- Drill-down floating window ---------- */
+.modal-overlay{
+  position:fixed; inset:0; background:rgba(15,63,36,0.45); z-index:200;
+  display:flex; align-items:center; justify-content:center; padding:20px;
+  animation:fadein .18s ease;
+}
+.modal-card{
+  background:var(--white); border-radius:var(--radius); box-shadow:0 18px 60px rgba(0,0,0,0.30);
+  max-width:880px; width:100%; max-height:90vh; overflow-y:auto; padding:24px 26px;
+}
+.modal-close{
+  background:var(--forest-tint); border:none; color:var(--forest-dark); font-weight:700;
+  border-radius:999px; width:32px; height:32px; cursor:pointer; font-size:15px; flex-shrink:0;
+}
+.modal-close:hover{background:var(--danger-tint); color:var(--danger);}
+.modal-grid{display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:14px;}
+@media(max-width:760px){.modal-grid{grid-template-columns:1fr;}}
+
+/* ---------- ON/OFF segmented toggle ---------- */
+.seg-toggle{display:inline-flex; border:1.5px solid var(--line); border-radius:999px; overflow:hidden;}
+.seg-toggle button{
+  border:none; background:var(--white); color:var(--slate); font-weight:700; font-size:12.5px;
+  padding:8px 22px; cursor:pointer; letter-spacing:.6px; transition:.12s ease;
+}
+.seg-toggle button.active-on{background:var(--success); color:var(--white);}
+.seg-toggle button.active-off{background:var(--danger); color:var(--white);}
+
+@media print{
+  .topbar,.no-print{display:none !important;}
+  body{background:white;}
+}
+
+/* ---------- SheetDB sync status badge ---------- */
+.sync-badge{
+  position:fixed; bottom:16px; right:16px; z-index:300;
+  background:var(--white); border:1px solid var(--line); box-shadow:var(--shadow);
+  border-radius:999px; padding:7px 14px; font-size:12px; font-weight:600;
+  color:var(--slate); display:flex; align-items:center; gap:7px; cursor:pointer;
+  transition:.15s ease; user-select:none;
+}
+.sync-badge:hover{border-color:var(--gold);}
+.sync-dot{width:8px; height:8px; border-radius:50%; background:var(--slate); flex-shrink:0;}
+.sync-badge.state-synced .sync-dot{background:var(--success);}
+.sync-badge.state-syncing .sync-dot,
+.sync-badge.state-pending .sync-dot,
+.sync-badge.state-connecting .sync-dot{background:var(--gold-dark); animation:syncpulse 1s infinite;}
+.sync-badge.state-error .sync-dot,
+.sync-badge.state-offline .sync-dot{background:var(--danger);}
+@keyframes syncpulse{0%,100%{opacity:1;} 50%{opacity:.3;}}
+@media(max-width:600px){.sync-badge{bottom:10px; right:10px; padding:6px 12px; font-size:11px;}}
+</style>
+</head>
+<body>
+
+<div class="topbar no-print">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="20" cy="20" r="19" fill="#ECC070"/>
+      <circle cx="20" cy="20" r="14" fill="#185D35"/>
+      <path d="M20 10 L23 17 L30 17 L24.5 21.5 L26.5 29 L20 24.5 L13.5 29 L15.5 21.5 L10 17 L17 17 Z" fill="#ECC070"/>
+    </svg>
+    <div class="brand-text">
+      <div class="title">Hum Hain Pakistan</div>
+      <div class="subtitle">SDG Youth Campaign</div>
+    </div>
+  </div>
+  <div id="roleIndicator" class="role-pill" style="display:none;">
+    <span id="roleIndicatorText"></span>
+    <button onclick="App.logout()">Switch role</button>
+  </div>
+</div>
+
+<div class="shell" id="shell">
+  <!-- Dynamic Injection View Layer -->
+</div>
+
+<div class="sync-badge no-print state-connecting" id="syncBadge" onclick="manualSync()" title="Click to pull the latest shared data">
+  <span class="sync-dot"></span><span id="syncBadgeText">Connecting to shared data…</span>
+</div>
+
+<script>
+/* ============================================================
+   HHP DATA REPOSITORY
+   ============================================================ */
+const STORE_KEY = 'hhp_v2';
+
+const DEFAULT_INSTITUTIONS = [
+  {name:'Islamabad Model College for Girls, F-6/2', type:'school'},
+  {name:'Islamabad Model College for Boys, I-8/4', type:'school'},
+  {name:'Islamabad College for Girls, F-7/2', type:'school'},
+  {name:'Islamabad College for Boys, F-7/3', type:'school'},
+  {name:'Federal Government Boys Secondary School, G-6/3', type:'school'},
+  {name:'Federal Government Girls Secondary School, F-8/1', type:'school'},
+  {name:'The City School, Islamabad Campus', type:'school'},
+  {name:'Beaconhouse School System, Margalla Campus', type:'school'},
+  {name:'Roots International School, Islamabad', type:'school'},
+  {name:'Quaid-i-Azam University', type:'university'},
+  {name:'National University of Sciences and Technology (NUST)', type:'university'},
+  {name:'International Islamic University, Islamabad (IIUI)', type:'university'},
+  {name:'COMSATS University Islamabad', type:'university'},
+  {name:'Air University, Islamabad', type:'university'},
+  {name:'Bahria University, Islamabad', type:'university'}
+].map((it,i)=>({ id:'inst_'+(i+1), name: it.name, type: it.type, key: 'HHP-'+(i+100) }));
+
+function defaultData(){
+  return {
+    institutions: DEFAULT_INSTITUTIONS,
+    students: [],
+    surveys: [],
+    quizzes: [],
+    igsiPassword: 'igsi-2026',
+    taskforcePassword: 'taskforce-2026',
+    settings: { preOpen: true, postOpen: true, quizOpen: true }
+  };
+}
+
+/* ---------- Local cache: instant load + offline fallback ---------- */
+function loadLocalData(){
+  const raw = localStorage.getItem(STORE_KEY);
+  if(!raw){ const d = defaultData(); localStorage.setItem(STORE_KEY, JSON.stringify(d)); return d; }
+  try{ return JSON.parse(raw); } catch(e){ return defaultData(); }
+}
+function saveLocalData(db){ localStorage.setItem(STORE_KEY, JSON.stringify(db)); }
+let DB = loadLocalData();
+
+/* ============================================================
+   SHEETDB SYNC LAYER
+   Mirrors DB to the real, already-designed Google Sheet (6 named sheets:
+   surveys, quiz_results, focal_campuses, operational_gates, students,
+   app_config). Each sheet is written as one real row per record — no
+   JSON blobs, no delete-and-rebuild — so the workbook stays readable and
+   no stakeholder's data can be wiped by another device's save.
+   No dashboard function/logic below this block is altered — this only
+   changes what loadData()/saveData() do under the hood.
+   ============================================================ */
+const SHEETDB_API = 'https://script.google.com/macros/s/AKfycbyjjA3qsQX5mA4U9s2YwqcQeV-kV7Mlo4ng12xXG-uXp1LGNb_7IvE0JcYnRvrjw4lI/exec';
+
+const GATE_DEFS = [
+  { id:'pre',  name:'Pre-Assessment Survey',  settingKey:'preOpen'  },
+  { id:'post', name:'Post-Assessment Survey', settingKey:'postOpen' },
+  { id:'quiz', name:'SDG Quiz',               settingKey:'quizOpen' }
+];
+
+/* ---------- Local bookkeeping: which append-only records have already
+   reached the sheet, so a save only ever POSTs genuinely new rows. ---------- */
+const SYNCED_IDS_KEY = 'hhp_synced_ids_v1';
+function loadSyncedIds(){
+  try{
+    const parsed = JSON.parse(localStorage.getItem(SYNCED_IDS_KEY));
+    return { students: parsed?.students||[], surveys: parsed?.surveys||[], quizzes: parsed?.quizzes||[] };
+  }catch(e){ return { students:[], surveys:[], quizzes:[] }; }
+}
+function saveSyncedIds(){ localStorage.setItem(SYNCED_IDS_KEY, JSON.stringify(_syncedIds)); }
+let _syncedIds = loadSyncedIds();
+
+/* ---------- Low-level SheetDB REST helpers (each checks response status,
+   so a real failure is never mistaken for success). ---------- */
+async function fetchSheet(sheet){
+  const res = await fetch(SHEETDB_API+'?sheet='+encodeURIComponent(sheet));
+  if(!res.ok){
+    if(res.status===404) return [];
+    const body = await res.text().catch(()=>'');
+    throw new Error('Read failed for '+sheet+' ('+res.status+'): '+body.slice(0,200));
+  }
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+async function postRows(sheet, rows){
+  if(!rows.length) return;
+  const res = await fetch(SHEETDB_API+'?sheet='+encodeURIComponent(sheet), {
+    method:'POST', headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify({ data: rows })
+  });
+  if(!res.ok){
+    const body = await res.text().catch(()=>'');
+    throw new Error('Write failed for '+sheet+' ('+res.status+'): '+body.slice(0,200));
+  }
+}
+async function putRow(sheet, keyColumn, keyValue, data){
+  const res = await fetch(SHEETDB_API+'/'+encodeURIComponent(keyColumn)+'/'+encodeURIComponent(keyValue)+'?sheet='+encodeURIComponent(sheet), {
+    method:'PUT', headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify({ data })
+  });
+  if(!res.ok){
+    const body = await res.text().catch(()=>'');
+    throw new Error('Update failed for '+sheet+' ('+res.status+'): '+body.slice(0,200));
+  }
+}
+async function deleteRow(sheet, keyColumn, keyValue){
+  const res = await fetch(SHEETDB_API+'/'+encodeURIComponent(keyColumn)+'/'+encodeURIComponent(keyValue)+'?sheet='+encodeURIComponent(sheet), { method:'DELETE' });
+  if(!res.ok && res.status!==404){
+    const body = await res.text().catch(()=>'');
+    throw new Error('Delete failed for '+sheet+' ('+res.status+'): '+body.slice(0,200));
+  }
+}
+/* Fully reconciles a small, bounded sheet (institutions / gates / config):
+   inserts rows that don't exist yet, updates ones that changed, and — only
+   when allowDelete is true — removes rows no longer present locally. */
+async function reconcileSheet(sheet, keyColumn, localRows, { allowDelete=false } = {}){
+  const remoteRows = await fetchSheet(sheet);
+  const remoteByKey = new Map(remoteRows.map(r=>[String(r[keyColumn]), r]));
+  const localByKey = new Map(localRows.map(r=>[String(r[keyColumn]), r]));
+
+  const toCreate = [];
+  for(const row of localRows){
+    const existing = remoteByKey.get(String(row[keyColumn]));
+    if(!existing){ toCreate.push(row); continue; }
+    const changed = Object.keys(row).some(k => String(existing[k] ?? '') !== String(row[k] ?? ''));
+    if(changed) await putRow(sheet, keyColumn, row[keyColumn], row);
+  }
+  if(toCreate.length) await postRows(sheet, toCreate);
+  if(allowDelete){
+    for(const key of remoteByKey.keys()){
+      if(!localByKey.has(key)) await deleteRow(sheet, keyColumn, key);
+    }
+  }
+}
+
+/* ---------- Row shape helpers (map DB records <-> sheet columns) ---------- */
+function fullStudentName(s){ return [s.firstName, s.middleName, s.lastName].filter(Boolean).join(' '); }
+function instNameById(id){ const i = DB.institutions.find(x=>x.id===id); return i ? i.name : ''; }
+function awarenessLabel(avg){
+  if(avg==null) return '';
+  if(avg >= 3.8) return 'High';
+  if(avg >= 2.5) return 'Medium';
+  return 'Low';
+}
+function surveyAwarenessAvg(phase, answers){
+  const ids = awarenessLikertIds(phase);
+  let sum=0, n=0;
+  ids.forEach(id=>{ if(answers[id]!=null){ sum+=answers[id]; n++; } });
+  return n ? sum/n : null;
+}
+function studentToRow(s){
+  return {
+    student_key: s.id,
+    student_name: fullStudentName(s),
+    school_name: instNameById(s.institutionId),
+    institution_id: s.institutionId,
+    registered_at: s.createdAt
+  };
+}
+function surveyToRow(s){
+  const stu = DB.students.find(x=>x.id===s.studentId);
+  const avg = surveyAwarenessAvg(s.phase, s.answers);
+  const row = {
+    id: s.id, timestamp: s.submittedAt,
+    student_name: stu ? fullStudentName(stu) : '',
+    school_name: stu ? instNameById(stu.institutionId) : '',
+    assessment_type: s.phase,
+    sdg_awareness_level: awarenessLabel(avg)
+  };
+  surveyQuestions(s.phase).slice(0,12).forEach((q,i)=>{
+    row['q'+(i+1)] = s.answers[q.id]!=null ? s.answers[q.id] : '';
+  });
+  return row;
+}
+function quizToRow(q){
+  const stu = DB.students.find(x=>x.id===q.studentId);
+  return {
+    id: q.id, timestamp: q.submittedAt,
+    student_name: stu ? fullStudentName(stu) : '',
+    school_name: stu ? instNameById(stu.institutionId) : '',
+    score: q.score, total_questions: q.total,
+    passing_status: q.passed ? 'PASS' : 'FAIL',
+    certificate_id: q.passed ? q.id : ''
+  };
+}
+function institutionToRow(inst){
+  return {
+    focal_key: inst.key || '',
+    school_name: inst.name,
+    total_enrolled: DB.students.filter(s=>s.institutionId===inst.id).length
+    // coordinator_name / contact_email / target_achieved are intentionally
+    // never sent — those stay whatever a stakeholder fills in by hand.
+  };
+}
+function gateToRow(def){
+  const open = !!DB.settings[def.settingKey];
+  return { phase_id: def.id, phase_name: def.name, status: open?'Open':'Closed', last_updated_by:'IGSI Panel', allow_student_submissions: open };
+}
+function configRows(){
+  const now = new Date().toISOString();
+  return [
+    { key:'igsiPassword', value: DB.igsiPassword, updated_by:'IGSI Panel', updated_at: now },
+    { key:'taskforcePassword', value: DB.taskforcePassword, updated_by:'IGSI Panel', updated_at: now },
+    { key:'questions', value: JSON.stringify(DB.questions), updated_by:'IGSI Panel', updated_at: now }
+  ];
+}
+
+/* ---------- Pull: rebuild DB from the live sheet ---------- */
+async function pullFromSheetDB(){
+  const [studentRows, surveyRows, quizRows, campusRows, gateRows, configRowsRemote] = await Promise.all([
+    fetchSheet('students'), fetchSheet('surveys'), fetchSheet('quiz_results'),
+    fetchSheet('focal_campuses'), fetchSheet('operational_gates'), fetchSheet('app_config')
+  ]);
+  if(!studentRows.length && !surveyRows.length && !quizRows.length && !campusRows.length && !gateRows.length && !configRowsRemote.length){
+    return null; // sheet is completely empty -> first-ever run, caller should seed it
+  }
+
+  const priorStudentsById = new Map(DB.students.map(s=>[s.id, s]));
+  const priorInstByName = new Map(DB.institutions.map(i=>[i.name, i]));
+
+  let institutions = campusRows.map(row=>{
+    const prior = priorInstByName.get(row.school_name);
+    if(prior) return { ...prior, key: row.focal_key || prior.key };
+    return { id: uid('inst'), name: row.school_name, type: 'school', key: row.focal_key || null };
+  });
+  if(!institutions.length) institutions = DB.institutions;
+  const instIdByName = new Map(institutions.map(i=>[i.name, i.id]));
+
+  const students = studentRows.map(row=>{
+    const prior = priorStudentsById.get(row.student_key);
+    const institutionId = instIdByName.get(row.school_name) || row.institution_id || (prior?prior.institutionId:null);
+    if(prior) return { ...prior, institutionId, createdAt: row.registered_at || prior.createdAt };
+    const parts = (row.student_name||'').trim().split(/\s+/).filter(Boolean);
+    return {
+      id: row.student_key,
+      firstName: parts[0]||'', middleName: parts.length>2?parts.slice(1,-1).join(' '):'',
+      lastName: parts.length>1?parts[parts.length-1]:'',
+      gender:'', institutionId, level:'', className:'', sectionName:'',
+      createdAt: row.registered_at || new Date().toISOString()
+    };
+  });
+  const studentIdByNameSchool = new Map(students.map(s=>[fullStudentName(s)+'||'+(institutions.find(i=>i.id===s.institutionId)||{}).name, s.id]));
+
+  const surveys = surveyRows.map(row=>{
+    const studentId = studentIdByNameSchool.get(row.student_name+'||'+row.school_name) || null;
+    const stu = students.find(s=>s.id===studentId);
+    const answers = {};
+    surveyQuestions(row.assessment_type).slice(0,12).forEach((q,i)=>{
+      const val = row['q'+(i+1)];
+      if(val!==undefined && val!=='') answers[q.id] = isNaN(val) ? val : Number(val);
+    });
+    return { id: row.id, studentId, institutionId: stu?stu.institutionId:null, phase: row.assessment_type, answers, submittedAt: row.timestamp };
+  });
+
+  const quizzes = quizRows.map(row=>{
+    const studentId = studentIdByNameSchool.get(row.student_name+'||'+row.school_name) || null;
+    const stu = students.find(s=>s.id===studentId);
+    const total = Number(row.total_questions)||0, score = Number(row.score)||0;
+    return { id: row.id, studentId, institutionId: stu?stu.institutionId:null, answers:{}, score, total,
+      pct: total?Math.round(score/total*100):0, passed: row.passing_status==='PASS', submittedAt: row.timestamp };
+  });
+
+  const settings = { ...DB.settings };
+  gateRows.forEach(row=>{
+    const def = GATE_DEFS.find(g=>g.id===row.phase_id);
+    if(def) settings[def.settingKey] = (row.allow_student_submissions===true || row.allow_student_submissions==='true' || row.allow_student_submissions===1 || row.allow_student_submissions==='1');
+  });
+
+  let igsiPassword = DB.igsiPassword, taskforcePassword = DB.taskforcePassword, questions = DB.questions;
+  configRowsRemote.forEach(row=>{
+    if(row.key==='igsiPassword' && row.value) igsiPassword = row.value;
+    if(row.key==='taskforcePassword' && row.value) taskforcePassword = row.value;
+    if(row.key==='questions' && row.value){ try{ questions = JSON.parse(row.value); }catch(e){} }
+  });
+
+  _syncedIds.students = [...new Set([..._syncedIds.students, ...students.map(s=>s.id)])];
+  _syncedIds.surveys  = [...new Set([..._syncedIds.surveys,  ...surveys.map(s=>s.id)])];
+  _syncedIds.quizzes  = [...new Set([..._syncedIds.quizzes,  ...quizzes.map(q=>q.id)])];
+  saveSyncedIds();
+
+  return { institutions, students, surveys, quizzes, settings, igsiPassword, taskforcePassword, questions };
+}
+
+let _syncTimer = null, _syncInFlight = false, _syncQueued = false, _lastSyncError = '';
+
+/* ---------- Push: send only what's new/changed to the live sheet ---------- */
+async function pushToSheetDB(){
+  if(_syncInFlight){ _syncQueued = true; return; }
+  _syncInFlight = true;
+  updateSyncBadge('syncing');
+  try{
+    const newStudents = DB.students.filter(s=>!_syncedIds.students.includes(s.id));
+    if(newStudents.length){ await postRows('students', newStudents.map(studentToRow)); _syncedIds.students.push(...newStudents.map(s=>s.id)); }
+
+    const newSurveys = DB.surveys.filter(s=>!_syncedIds.surveys.includes(s.id));
+    if(newSurveys.length){ await postRows('surveys', newSurveys.map(surveyToRow)); _syncedIds.surveys.push(...newSurveys.map(s=>s.id)); }
+
+    const newQuizzes = DB.quizzes.filter(q=>!_syncedIds.quizzes.includes(q.id));
+    if(newQuizzes.length){ await postRows('quiz_results', newQuizzes.map(quizToRow)); _syncedIds.quizzes.push(...newQuizzes.map(q=>q.id)); }
+
+    saveSyncedIds();
+
+    await reconcileSheet('focal_campuses', 'school_name', DB.institutions.map(institutionToRow), { allowDelete:true });
+    await reconcileSheet('operational_gates', 'phase_id', GATE_DEFS.map(gateToRow), { allowDelete:false });
+    await reconcileSheet('app_config', 'key', configRows(), { allowDelete:false });
+
+    _lastSyncError = '';
+    updateSyncBadge('synced');
+  }catch(err){
+    _lastSyncError = err.message || String(err);
+    console.error('SheetDB sync failed:', err);
+    updateSyncBadge('error');
+  }finally{
+    _syncInFlight = false;
+    if(_syncQueued){ _syncQueued = false; pushToSheetDB(); }
+  }
+}
+
+/* saveData() keeps its original name/signature so every existing call site
+   (13 of them) works unchanged. It now saves locally AND queues a debounced
+   push to SheetDB, so rapid successive saves become a single network sync. */
+function saveData(){
+  saveLocalData(DB);
+  updateSyncBadge('pending');
+  if(_syncTimer) clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(()=>{ _syncTimer = null; pushToSheetDB(); }, 1200);
+}
+
+function updateSyncBadge(state){
+  const badge = document.getElementById('syncBadge');
+  const text = document.getElementById('syncBadgeText');
+  if(!badge || !text) return;
+  badge.className = 'sync-badge no-print state-'+state;
+  const labels = {
+    connecting:'Connecting to shared data…', synced:'Synced — everyone sees this data',
+    syncing:'Syncing…', pending:'Saving…', error:'Sync failed — saved on this device',
+    offline:'Offline — saved on this device only'
+  };
+  text.textContent = labels[state] || state;
+  badge.title = (state==='error' && _lastSyncError)
+    ? ('Sync error: '+_lastSyncError+' — click to retry')
+    : 'Click to pull the latest shared data';
+}
+
+async function manualSync(){
+  updateSyncBadge('syncing');
+  try{
+    const remote = await pullFromSheetDB();
+    if(remote){ DB = remote; saveLocalData(DB); }
+    updateSyncBadge('synced');
+    alert('Data refreshed from the shared sheet. Switch role (or reload the page) to see the latest records reflected in the view.');
+  }catch(err){
+    _lastSyncError = err.message || String(err);
+    console.error(err);
+    updateSyncBadge('error');
+    alert('Could not reach the shared sheet: '+_lastSyncError);
+  }
+}
+
+async function bootSync(){
+  try{
+    const remote = await pullFromSheetDB();
+    if(remote){
+      DB = remote;
+      saveLocalData(DB);
+      updateSyncBadge('synced');
+    } else {
+      await pushToSheetDB(); // sheet is empty (first-ever run) — seed it with current local data
+    }
+  }catch(err){
+    _lastSyncError = err.message || String(err);
+    console.error('Initial SheetDB sync failed, using data saved on this device:', err);
+    updateSyncBadge('offline');
+  }
+}
+
+/* Quiet background refresh: every 40s, pull the latest shared data into DB
+   so focal persons / IGSI / taskforce see new student submissions without
+   needing to click anything. Skips while a local save is pending/in-flight
+   so an unsynced local change can never be clobbered. Only updates the DB
+   object in memory — never touches the currently rendered screen, so no
+   in-progress form (e.g. a student mid-quiz) is ever disrupted. */
+setInterval(async () => {
+  if(_syncInFlight || _syncTimer) return;
+  try{
+    const remote = await pullFromSheetDB();
+    if(remote){ DB = remote; saveLocalData(DB); updateSyncBadge('synced'); }
+  }catch(err){
+    console.error('Background SheetDB refresh failed:', err);
+  }
+}, 40000);
+
+function uid(prefix){ return prefix+'_'+Math.random().toString(36).slice(2,10); }
+function genKey(){ return 'HHP-'+Math.random().toString(36).slice(2,6).toUpperCase(); }
+function pct(a,b){ return b===0?0:Math.round((a/b)*100); }
+function fmtDate(iso){ const d=new Date(iso); return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); }
+
+function getStudentFullName(stu) {
+  if(!stu) return '';
+  return `${stu.firstName} ${stu.middleName ? stu.middleName + ' ' : ''}${stu.lastName}`.trim();
+}
+
+function getStudentClassDisplay(stu) {
+  if(!stu) return '';
+  return `${stu.level==='university'?'Program':'Class'}: ${stu.className} (${stu.level==='university'?'Semester':'Section'}: ${stu.sectionName})`;
+}
+
+const QUIZ_QUESTIONS = [
+  {id:'q1', text:'What does "SDG" stand for?', opts:['Social Development Goals','Sustainable Development Goals','State Development Guidelines','Sustainable Distribution Goals'], correct:1},
+  {id:'q2', text:'How many Sustainable Development Goals are there in total?', opts:['12','15','17','20'], correct:2},
+  {id:'q3', text:'In which year did United Nations member states adopt the SDGs?', opts:['2000','2010','2015','2020'], correct:2},
+  {id:'q4', text:'By what target year are the SDGs meant to be achieved?', opts:['2025','2030','2035','2050'], correct:1},
+  {id:'q5', text:'Which SDG focuses on ending poverty in all its forms, everywhere?', opts:['SDG 1: No Poverty','SDG 4: Quality Education','SDG 8: Decent Work','SDG 10: Reduced Inequalities'], correct:0},
+  {id:'q6', text:'Which SDG is primarily concerned with access to clean water and sanitation?', opts:['SDG 3: Good Health','SDG 6: Clean Water and Sanitation','SDG 11: Sustainable Cities','SDG 14: Life Below Water'], correct:1},
+  {id:'q7', text:'Which SDG calls for urgent action to combat climate change and its impacts?', opts:['SDG 7: Affordable Energy','SDG 9: Industry & Innovation','SDG 13: Climate Action','SDG 15: Life on Land'], correct:2},
+  {id:'q8', text:'Which SDG aims to ensure inclusive, quality education for all?', opts:['SDG 4: Quality Education','SDG 5: Gender Equality','SDG 16: Peace & Justice','SDG 17: Partnerships'], correct:0},
+  {id:'q9', text:'Which SDG focuses on achieving gender equality and empowering women and girls?', opts:['SDG 2: Zero Hunger','SDG 5: Gender Equality','SDG 12: Responsible Consumption','SDG 16: Peace & Justice'], correct:1},
+  {id:'q10', text:'SDG 17 is primarily about:', opts:['Life Below Water','Responsible Consumption','Partnerships for the Goals','Peace, Justice & Strong Institutions'], correct:2},
+];
+
+const SURVEY_SECTIONS = [
+  {name:'Awareness', questions:[
+    {id:'s1', type:'likert', text:'I am familiar with the term "Sustainable Development Goals (SDGs)."'},
+    {id:'s2', type:'likert', text:'I can name at least three of the 17 SDGs.'},
+    {id:'s3', type:'likert', text:'I understand why the SDGs are relevant to my everyday life.'},
+  ]},
+  {name:'Implementation', questions:[
+    {id:'s4', type:'mcq', text:'Who is primarily responsible for achieving the SDGs in a country?', opts:['Government alone','Businesses alone','Citizens alone','Government, businesses, and citizens together']},
+    {id:'s5', type:'mcq', text:'Which of these is an example of an SDG-aligned action at a school or campus level?', opts:['Organizing a waste-segregation drive','Increasing single-use plastic in the canteen','Ignoring energy use in classrooms','Discouraging community volunteering']},
+    {id:'s6', type:'mcq', text:'Which SDG do you think is most urgent for your community right now?', opts:['No Poverty','Quality Education','Clean Water and Sanitation','Climate Action']},
+  ]},
+  {name:'Pakistan-Specific Context', questions:[
+    {id:'s7', type:'likert', text:'Pakistan faces significant challenges related to climate change, such as floods and water scarcity.'},
+    {id:'s8', type:'likert', text:'I am aware of local or community-level initiatives in Pakistan that work toward the SDGs.'},
+    {id:'s9', type:'likert', text:'Youth engagement is essential for Pakistan to make progress on the SDGs by 2030.'},
+  ]},
+  {name:'Sustainability', questions:[
+    {id:'s10', type:'likert', text:'I try to reduce waste and conserve resources in my daily life.'},
+    {id:'s11', type:'likert', text:'I would encourage my peers or family to adopt more sustainable habits.'},
+    {id:'s12', type:'likert', text:'I believe my individual actions can contribute meaningfully to global sustainability goals.'},
+  ]}
+];
+const LIKERT_LABELS = ['Strongly Disagree','Disagree','Neutral','Agree','Strongly Agree'];
+
+/* ============================================================
+   EDITABLE QUESTION BANKS (managed by IGSI · stored in DB)
+   Question types: 'single' (one choice), 'multi' (many), 'likert'
+   ============================================================ */
+function defaultQuestionBanks(){
+  const surveyBank = () => {
+    const arr = [];
+    SURVEY_SECTIONS.forEach(sec => sec.questions.forEach(q => arr.push({
+      id: q.id, section: sec.name,
+      type: q.type==='mcq' ? 'single' : 'likert',
+      text: q.text, opts: q.opts ? [...q.opts] : []
+    })));
+    return arr;
+  };
+  return {
+    pre: surveyBank(),
+    post: surveyBank(),
+    quiz: QUIZ_QUESTIONS.map(q=>({id:q.id, type:'single', text:q.text, opts:[...q.opts], correct:[q.correct]}))
+  };
+}
+if(!DB.questions){ DB.questions = defaultQuestionBanks(); saveData(); }
+
+function surveyQuestions(phase){ return DB.questions[phase] || []; }
+function quizBank(){ return DB.questions.quiz || []; }
+function awarenessLikertIds(phase){
+  const likerts = surveyQuestions(phase).filter(q=>q.type==='likert');
+  const aw = likerts.filter(q=>(q.section||'').trim().toLowerCase()==='awareness');
+  return (aw.length ? aw : likerts).map(q=>q.id);
+}
+
+/* Official SDG color wheel (Goals 1–17) for vibrant charts */
+const SDG_COLORS = ['#E5243B','#DDA63A','#4C9F38','#C5192D','#FF3A21','#26BDE2','#FCC30B','#A21942','#FD6925','#DD1367','#FD9D24','#BF8B2E','#3F7E44','#0A97D9','#56C02B','#00689D','#19486A'];
+const C_PASS='#4C9F38', C_FAIL='#E5243B', C_YELLOW='#FCC30B', C_ORANGE='#FD6925', C_BLUE='#26BDE2', C_NAVY='#00689D', C_LGREEN='#56C02B', C_PINK='#DD1367', C_REST='#DCE3D6';
+const GENDERS = ['Female','Male','Other'];
+const GENDER_COLORS = [C_PINK, C_BLUE, C_YELLOW];
+function instColors(){ return DB.institutions.map((_,i)=>SDG_COLORS[i%SDG_COLORS.length]); }
+function shortName(n){ return n.length>16 ? n.slice(0,15)+'…' : n; }
+
+/* ============================================================
+   ROUTING STATE MACHINE INTERNALS
+   ============================================================ */
+const App = {
+  state: {
+    role: null,
+    studentId: sessionStorage.getItem('hhp_student_id') || null,
+    focalInstitutionId: null,
+    quizDraft: {},
+    surveyDraft: {},
+    registerDraft: null
+  },
+  charts: {},
+
+  el(html){ document.getElementById('shell').innerHTML = html; window.scrollTo(0,0); },
+  setRoleIndicator(text){
+    const ind = document.getElementById('roleIndicator');
+    if(text){ ind.style.display='flex'; document.getElementById('roleIndicatorText').textContent = text; }
+    else { ind.style.display='none'; }
+  },
+  logout(){
+    this.state.role=null; this.state.focalInstitutionId=null; this.state.studentId=null; this.state.registerDraft=null;
+    sessionStorage.removeItem('hhp_student_id');
+    this.setRoleIndicator(null);
+    this.showLanding();
+  },
+
+  /* ---------------- LANDING SYSTEM ---------------- */
+  showLanding(){
+    this.setRoleIndicator(null);
+    this.el(`
+      <div class="hero">
+        <h1>Hum Hain Pakistan</h1>
+        <p class="lead">SDG Youth Campaign Dashboard — Complete assessments, evaluate individual knowledge metrics, and track live localized awareness parameters.</p>
+      </div>
+      <div class="role-grid">
+        <div class="role-card" onclick="App.selectRole('student')">
+          ${icon('student')}<h3>Student</h3><p>Participate in assessments, take the SDG quiz, and generate your certificate.</p>
+        </div>
+        <div class="role-card" onclick="App.selectRole('focal')">
+          ${icon('focal')}<h3>Institution Focal Person</h3><p>Audit visual metric curves and registered student rosters.</p>
+        </div>
+        <div class="role-card" onclick="App.selectRole('taskforce')">
+          ${icon('taskforce')}<h3>SDG Taskforce</h3><p>Review comprehensive macro indicators and analytics charts.</p>
+        </div>
+        <div class="role-card" onclick="App.selectRole('igsi')">
+          ${icon('igsi')}<h3>IGSI Coordinator</h3><p>Configure institutional framework entities, access keys, and analytical segments.</p>
+        </div>
+      </div>
+    `);
+  },
+
+  selectRole(role){
+    if(role==='student'){
+      if(this.state.studentId && DB.students.find(s=>s.id===this.state.studentId)) this.showStudentHome();
+      else this.showStudentRegister();
+    } else if(role==='focal'){ this.showFocalLogin(); }
+    else if(role==='taskforce'){ this.showTaskforceLogin(); }
+    else if(role==='igsi'){ this.showIgsiLogin(); }
+  },
+
+  backToLanding(){ this.showLanding(); },
+
+  /* ---------------- STUDENT PROFILE CREATION ---------------- */
+  showStudentRegister(editMode){
+    this.setRoleIndicator('Student Enrollment');
+    let existing = editMode ? this.currentStudent() : this.state.registerDraft;
+    const instOpts = DB.institutions.map(i=>`<option value="${i.id}" ${existing&&existing.institutionId===i.id?'selected':''}>${escapeHtml(i.name)}</option>`).join('');
+    
+    this.el(`
+      <div class="back-link no-print" onclick="${editMode?'App.showStudentHome()':'App.backToLanding()'}">&larr; Back</div>
+      <div class="card" style="max-width:640px;margin:0 auto;">
+        <span class="eyebrow">${editMode?'Profile Update':'Verification Setup'}</span>
+        <h2>Demographic Account Profile</h2>
+        <p class="muted">Ensure all structural parameters are completed properly. Missing profile information will lead to incomplete database values.</p>
+        <div id="regError"></div>
+        
+        <div class="grid grid-3" style="gap:12px; margin-bottom:0;">
+          <div>
+            <label>First Name</label>
+            <input type="text" id="regFirstName" placeholder="e.g. Zainab" value="${existing?escapeHtml(existing.firstName):''}">
+          </div>
+          <div>
+            <label>Middle Name <span class="muted" style="font-weight:400;">(Optional)</span></label>
+            <input type="text" id="regMiddleName" placeholder="e.g. Ahmed" value="${existing?escapeHtml(existing.middleName):''}">
+          </div>
+          <div>
+            <label>Last Name</label>
+            <input type="text" id="regLastName" placeholder="e.g. Malik" value="${existing?escapeHtml(existing.lastName):''}">
+          </div>
+        </div>
+
+        <label>Gender Identification</label>
+        <select id="regGender">
+          <option value="">Select gender profile...</option>
+          <option value="Female" ${existing&&existing.gender==='Female'?'selected':''}>Female</option>
+          <option value="Male" ${existing&&existing.gender==='Male'?'selected':''}>Male</option>
+          <option value="Other" ${existing&&existing.gender==='Other'?'selected':''}>Other / Prefer not to say</option>
+        </select>
+
+        <label>Affiliated Institution Venue</label>
+        <select id="regInstitution"><option value="">Select your institution campus…</option>${instOpts}</select>
+
+        <label>Institution Authorization Key</label>
+        <input type="text" id="regAuthKey" placeholder="e.g. HHP-ABCD">
+        <p class="field-hint">Ask your institution's focal person for this key. Registration is blocked without the correct key.</p>
+
+        <label>Academic Track Tier</label>
+        <select id="regLevel" onchange="App.toggleRegField()">
+          <option value="school" ${existing&&existing.level==='school'?'selected':''}>School / Intermediate College</option>
+          <option value="university" ${existing&&existing.level==='university'?'selected':''}>Higher University Division</option>
+        </select>
+
+        <div class="grid grid-2" style="gap:12px; margin-bottom:0;">
+          <div>
+            <label id="regClassLabel">Class / Grade</label>
+            <input type="text" id="regClassName" placeholder="e.g. 10th Class" value="${existing?escapeHtml(existing.className):''}">
+          </div>
+          <div>
+            <label id="regSectionLabel">Section Identifier</label>
+            <input type="text" id="regSectionName" placeholder="e.g. Section C" value="${existing?escapeHtml(existing.sectionName):''}">
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-gold btn-block" onclick="App.processRegisterGate(${editMode?'true':'false'})">Review Registration Profile &rarr;</button>
+        </div>
+      </div>
+    `);
+    this.toggleRegField();
+  },
+  toggleRegField(){
+    const level = document.getElementById('regLevel').value;
+    document.getElementById('regClassLabel').textContent = level==='university' ? 'Program / Degree Enrolled' : 'Class / Grade';
+    document.getElementById('regClassName').placeholder = level==='university' ? 'e.g. BS Environmental Sciences' : 'e.g. 10th Class';
+    document.getElementById('regSectionLabel').textContent = level==='university' ? 'Semester / Year Term' : 'Section Identifier';
+    document.getElementById('regSectionName').placeholder = level==='university' ? 'e.g. 3rd Semester' : 'e.g. Section C';
+  },
+  processRegisterGate(editMode){
+    const firstName = document.getElementById('regFirstName').value.trim();
+    const middleName = document.getElementById('regMiddleName').value.trim();
+    const lastName = document.getElementById('regLastName').value.trim();
+    const gender = document.getElementById('regGender').value;
+    const institutionId = document.getElementById('regInstitution').value;
+    const level = document.getElementById('regLevel').value;
+    const className = document.getElementById('regClassName').value.trim();
+    const sectionName = document.getElementById('regSectionName').value.trim();
+
+    if(!firstName || !lastName || !gender || !institutionId || !className || !sectionName){
+      document.getElementById('regError').innerHTML = `<div class="error-box" style="border-radius:10px;">All standard demographic configuration blocks must be filled.</div>`;
+      return;
+    }
+
+    const authKey = document.getElementById('regAuthKey').value.trim().toUpperCase();
+    const inst = DB.institutions.find(i=>i.id===institutionId);
+    if(!inst || !inst.key || inst.key.toUpperCase() !== authKey){
+      document.getElementById('regError').innerHTML = `<div class="error-box" style="border-radius:10px;">Authorization key does not match the selected institution. Get the correct key from your focal person.</div>`;
+      return;
+    }
+
+    this.state.registerDraft = { firstName, middleName, lastName, gender, institutionId, level, className, sectionName };
+    this.showStudentReviewScreen(editMode);
+  },
+  showStudentReviewScreen(editMode){
+    this.setRoleIndicator('Verification Review Gate');
+    const draft = this.state.registerDraft;
+    const inst = DB.institutions.find(i=>i.id===draft.institutionId);
+
+    this.el(`
+      <div class="card" style="max-width:580px; margin:40px auto;">
+        <span class="eyebrow" style="color:var(--gold-dark);">Interactive Profile Verification</span>
+        <h2>Verify Account Information</h2>
+        <p class="muted">Verify your information before saving. Ensure the layout format is correct.</p>
+        
+        <table style="margin:20px 0; border:1px solid var(--line);">
+          <tr><th colspan="2" style="background:var(--forest-tint); color:var(--forest-dark);">Account Metadata Breakdown</th></tr>
+          <tr><td><b>Assembled Profile Name:</b></td><td>${escapeHtml(getStudentFullName(draft))}</td></tr>
+          <tr><td><b>Gender Segment:</b></td><td>${escapeHtml(draft.gender)}</td></tr>
+          <tr><td><b>Institutional Area:</b></td><td>${escapeHtml(inst?inst.name:'—')}</td></tr>
+          <tr><td><b>Academic Framework:</b></td><td>${draft.level==='university'?'University Division':'School / Intermediate'}</td></tr>
+          <tr><td><b>Class / Program Track:</b></td><td>${escapeHtml(draft.className)}</td></tr>
+          <tr><td><b>Section / Semester Tag:</b></td><td>${escapeHtml(draft.sectionName)}</td></tr>
+        </table>
+
+        <div class="btn-row">
+          <button class="btn btn-gold" style="flex:1;" onclick="App.executeFinalRegistration(${editMode})">Confirm & Save Changes</button>
+          <button class="btn btn-outline" style="flex:1;" onclick="App.showStudentRegister(${editMode})">Modify Configuration</button>
+        </div>
+      </div>
+    `);
+  },
+  executeFinalRegistration(editMode){
+    const draft = this.state.registerDraft;
+    if(editMode){
+      const stu = this.currentStudent();
+      Object.assign(stu, draft);
+      saveData();
+      this.state.registerDraft = null;
+      this.showStudentHome();
+      return;
+    }
+    const student = Object.assign({id: uid('stu'), createdAt: new Date().toISOString()}, draft);
+    DB.students.push(student); 
+    saveData();
+    this.state.studentId = student.id;
+    this.state.registerDraft = null;
+    sessionStorage.setItem('hhp_student_id', student.id);
+    this.showStudentHome();
+  },
+
+  /* ---------------- STUDENT OPERATIONS PANEL ---------------- */
+  currentStudent(){ return DB.students.find(s=>s.id===this.state.studentId); },
+  showStudentHome(){
+    const stu = this.currentStudent();
+    if(!stu){ this.showStudentRegister(); return; }
+    this.setRoleIndicator('Student · '+getStudentFullName(stu));
+    const inst = DB.institutions.find(i=>i.id===stu.institutionId);
+    const preDone = DB.surveys.some(s=>s.studentId===stu.id && s.phase==='pre');
+    const postDone = DB.surveys.some(s=>s.studentId===stu.id && s.phase==='post');
+    const quiz = DB.quizzes.filter(q=>q.studentId===stu.id).sort((a,b)=>new Date(b.submittedAt)-new Date(a.submittedAt))[0];
+    const certEligible = quiz && quiz.passed;
+
+    this.el(`
+      <div class="card">
+        <div class="flex-between">
+          <div>
+            <span class="eyebrow">Student Dashboard</span>
+            <h2>${escapeHtml(getStudentFullName(stu))}</h2>
+            <p class="muted">${escapeHtml(inst?inst.name:'—')} &nbsp;·&nbsp; ${escapeHtml(getStudentClassDisplay(stu))}</p>
+          </div>
+          <div class="btn-row no-print" style="margin-top:0;">
+            <button class="btn btn-outline" onclick="App.showStudentRegister(true)">Edit Profiles</button>
+            <button class="btn btn-outline" onclick="App.logout()">Switch Account</button>
+          </div>
+        </div>
+      </div>
+      <div class="grid grid-3">
+        ${taskCard('Pre-Assessment Metrics', preDone, 'Initial baseline testing tracker matrix.',
+          preDone ? `<button class="btn btn-outline btn-block" disabled>Completed ✓</button>`
+          : (DB.settings.preOpen ? `<button class="btn btn-gold btn-block" onclick="App.startSurvey('pre')">Launch Survey</button>` : `<button class="btn btn-outline btn-block" disabled>Closed</button>`))}
+        ${taskCard('Post-Assessment Metrics', postDone, 'Post-intervention comprehensive evaluation.',
+          postDone ? `<button class="btn btn-outline btn-block" disabled>Completed ✓</button>`
+          : (DB.settings.postOpen ? `<button class="btn btn-gold btn-block" onclick="App.startSurvey('post')">Launch Survey</button>` : `<button class="btn btn-outline btn-block" disabled>Closed</button>`))}
+        ${taskCard('SDG Champion Evaluation', !!quiz, 'Attain 70% accuracy bounds to trigger certification output.',
+          quiz ? `<button class="btn ${certEligible?'btn-gold':'btn-block'} btn-block" onclick="${certEligible?'App.showCertificate()':(DB.settings.quizOpen?'App.showQuiz()':'')}" ${(!certEligible && !DB.settings.quizOpen)?'disabled':''}>${certEligible?'Print Certificate 🎓':'Retake Assessment'}</button>`
+          : (DB.settings.quizOpen ? `<button class="btn btn-gold btn-block" onclick="App.showQuiz()">Launch Evaluation</button>` : `<button class="btn btn-outline btn-block" disabled>Closed</button>`))}
+      </div>
+      ${quiz?`<div class="card"><span class="eyebrow">Performance Assessment Array</span>${scoreRingBlock(quiz.pct, quiz.score, quiz.total, quiz.passed)}</div>`:''}
+    `);
+  },
+
+  /* ---------------- ASSESSMENT SURVEY MANAGEMENT ---------------- */
+  startSurvey(phase){
+    const isOpen = phase==='pre' ? DB.settings.preOpen : DB.settings.postOpen;
+    if(!isOpen){ this.showStudentHome(); return; }
+    const stu = this.currentStudent();
+    const already = DB.surveys.some(s=>s.studentId===stu.id && s.phase===phase);
+    if(already){ this.showStudentHome(); return; }
+    this.state.surveyDraft = {};
+    this.showSurveyForm(phase);
+  },
+  showSurveyForm(phase){
+    this.setRoleIndicator('Survey Engine');
+    const bank = surveyQuestions(phase);
+    let qHtml = '';
+    let lastSection = null, itemNo = 0;
+    bank.forEach(q=>{
+      const sec = q.section || 'General';
+      if(sec !== lastSection){ qHtml += `<div class="section-tag">${escapeHtml(sec)}</div>`; lastSection = sec; itemNo = 0; }
+      itemNo++;
+      qHtml += `<div class="q-block">
+        <span class="q-num">${escapeHtml(sec)} · Item ${itemNo}${q.type==='multi'?' · Select all that apply':''}</span>
+        <div class="q-text">${escapeHtml(q.text)}</div>
+        ${q.type==='likert' ? likertRow(q.id,'surveyDraft') : (q.type==='multi' ? multiRows(q.id, q.opts, 'surveyDraft') : mcqRows(q.id, q.opts, 'surveyDraft'))}
+      </div>`;
+    });
+    this.el(`
+      <div class="back-link no-print" onclick="App.showStudentHome()">&larr; Back</div>
+      <div class="card">
+        <span class="eyebrow">${phase==='pre'?'Baseline Pre-Campaign':'Evaluation Post-Campaign'}</span>
+        <h2>SDG Campaign Assessment</h2>
+        <p class="muted">Fill out the complete 12-item metrics questionnaire below to finalize validation procedures.</p>
+        <div id="surveyError"></div>
+        ${qHtml}
+        <div class="btn-row"><button class="btn btn-gold" onclick="App.submitSurvey('${phase}')">Finalize Matrix Submission</button></div>
+      </div>
+    `);
+  },
+  selectLikert(qid, val, bucket){
+    this.state[bucket||'surveyDraft'][qid] = val;
+    document.querySelectorAll(`.likert-opt[data-qid="${qid}"]`).forEach(el=>{
+      el.classList.toggle('selected', Number(el.dataset.val)===val);
+    });
+  },
+  selectOption(bucket, qid, val){
+    this.state[bucket][qid] = val;
+    document.querySelectorAll(`.opt[data-qid="${qid}"]`).forEach(el=>{
+      const on = Number(el.dataset.val)===val;
+      el.classList.toggle('selected', on);
+      const inp = el.querySelector('input'); if(inp) inp.checked = on;
+    });
+  },
+  toggleMulti(bucket, qid, val){
+    const cur = this.state[bucket][qid] || [];
+    const i = cur.indexOf(val);
+    if(i>=0) cur.splice(i,1); else cur.push(val);
+    this.state[bucket][qid] = cur;
+    document.querySelectorAll(`.opt[data-qid="${qid}"]`).forEach(el=>{
+      const on = cur.includes(Number(el.dataset.val));
+      el.classList.toggle('selected', on);
+      const box = el.querySelector('input'); if(box) box.checked = on;
+    });
+  },
+  submitSurvey(phase){
+    const bank = surveyQuestions(phase);
+    const totalQs = bank.length;
+    const answered = bank.filter(q=>{
+      const v = this.state.surveyDraft[q.id];
+      return Array.isArray(v) ? v.length>0 : v!=null;
+    }).length;
+    if(answered < totalQs){
+      document.getElementById('surveyError').innerHTML = `<div class="error-box" style="border-radius:10px;">Complete all survey parameters before execution (Completed ${answered}/${totalQs}).</div>`;
+      return;
+    }
+    const stu = this.currentStudent();
+    DB.surveys.push({id:uid('srv'), studentId:stu.id, institutionId:stu.institutionId, phase, answers:{...this.state.surveyDraft}, submittedAt:new Date().toISOString()});
+    saveData();
+    this.el(`
+      <div class="card" style="max-width:520px;margin:60px auto;text-align:center;">
+        <h2>Assessment Recorded! ✅</h2>
+        <p class="muted">Your feedback array has been securely logged within the system parameters.</p>
+        <button class="btn btn-gold" onclick="App.showStudentHome()">Return to Main View</button>
+      </div>
+    `);
+  },
+
+  /* ---------------- KNOWLEDGE KINETICS KITS ---------------- */
+  showQuiz(){
+    if(!DB.settings.quizOpen){ this.showStudentHome(); return; }
+    this.setRoleIndicator('Knowledge Quiz Evaluation');
+    this.state.quizDraft = {};
+    const bank = quizBank();
+    let qHtml = bank.map((q,idx)=>`
+      <div class="q-block">
+        <span class="q-num">Evaluation Block ${idx+1} / ${bank.length}${q.type==='multi'?' · Select all that apply':''}</span>
+        <div class="q-text">${escapeHtml(q.text)}</div>
+        ${q.type==='likert' ? likertRow(q.id,'quizDraft') : (q.type==='multi' ? multiRows(q.id, q.opts, 'quizDraft') : mcqRows(q.id, q.opts, 'quizDraft'))}
+      </div>`).join('');
+    this.el(`
+      <div class="back-link no-print" onclick="App.showStudentHome()">&larr; Back</div>
+      <div class="card">
+        <span class="eyebrow">SDG Core Competencies</span>
+        <h2>Knowledge Matrix Evaluation</h2>
+        <p class="muted">70% target score limit (7/10 answers matched) required to execute certificate rendering routines.</p>
+        <div id="quizError"></div>
+        ${qHtml}
+        <div class="btn-row"><button class="btn btn-gold" onclick="App.submitQuiz()">Commit Quiz Answers</button></div>
+      </div>
+    `);
+  },
+  submitQuiz(){
+    const bank = quizBank();
+    const answered = bank.filter(q=>{
+      const v = this.state.quizDraft[q.id];
+      return Array.isArray(v) ? v.length>0 : v!=null;
+    }).length;
+    if(answered < bank.length){
+      document.getElementById('quizError').innerHTML = `<div class="error-box" style="border-radius:10px;">Answer all configuration units before execution (Completed ${answered}/${bank.length}).</div>`;
+      return;
+    }
+    const gradable = bank.filter(q=>q.type!=='likert');
+    let score = 0;
+    gradable.forEach(q=>{
+      const v = this.state.quizDraft[q.id];
+      const correct = (q.correct||[]).slice().sort((a,b)=>a-b).join(',');
+      if(q.type==='multi'){
+        const given = Array.isArray(v) ? v.slice().sort((a,b)=>a-b).join(',') : '';
+        if(correct!=='' && given===correct) score++;
+      } else {
+        if(v === (Array.isArray(q.correct)? q.correct[0] : q.correct)) score++;
+      }
+    });
+    const total = gradable.length;
+    const p = pct(score,total);
+    const passed = p>=70;
+    const stu = this.currentStudent();
+    const record = {id:uid('qz'), studentId:stu.id, institutionId:stu.institutionId, answers:{...this.state.quizDraft}, score, total, pct:p, passed, submittedAt:new Date().toISOString()};
+    DB.quizzes.push(record); saveData();
+    this.showQuizResult(record);
+  },
+  showQuizResult(record){
+    this.el(`
+      <div class="card" style="max-width:560px;margin:40px auto;text-align:center;">
+        <span class="eyebrow">Evaluation Result Matrix</span>
+        ${scoreRingBlock(record.pct, record.score, record.total, record.passed)}
+        ${record.passed
+          ? `<p style="margin-top:16px;">🎉 Verification successful. Your digital profile has unlocked the formal certificate format.</p>
+             <button class="btn btn-gold" onclick="App.showCertificate()">Generate Certificate Layout</button>`
+          : `<p style="margin-top:16px;">Minimum profile target limits not satisfied. Review structural materials and re-evaluate.</p>
+             <button class="btn btn-outline" onclick="App.showQuiz()">Relaunch Evaluation Model</button>`}
+        <div style="margin-top:14px;"><button class="btn btn-outline" onclick="App.showStudentHome()">Return to Dashboard</button></div>
+      </div>
+    `);
+  },
+
+  /* ---------------- CERTIFICATE COMPILATION ---------------- */
+  showCertificate(){
+    const stu = this.currentStudent();
+    const quiz = DB.quizzes.filter(q=>q.studentId===stu.id && q.passed).sort((a,b)=>new Date(b.submittedAt)-new Date(a.submittedAt))[0];
+    if(!quiz){ this.showStudentHome(); return; }
+    const inst = DB.institutions.find(i=>i.id===stu.institutionId);
+    this.setRoleIndicator('Certificate Rendering View');
+    this.el(`
+      <div class="back-link no-print" onclick="App.showStudentHome()">&larr; Back</div>
+      <div class="btn-row no-print" style="justify-content:center;margin-bottom:6px;">
+        <button class="btn btn-gold" onclick="App.downloadCertificate()">⬇ Generate PDF Vector Print</button>
+      </div>
+      <div class="cert-outer">
+        <div class="cert-page" id="certPage">
+          <div class="cert-inner">
+            <div class="cert-eyebrow">Hum Hain Pakistan · SDG Youth Campaign</div>
+            <div class="cert-title">Certificate of Achievement</div>
+            <div class="cert-sub">SDG Champion Award</div>
+            <div class="cert-name">${escapeHtml(getStudentFullName(stu))}</div>
+            <div class="cert-body">
+              This certifies that the student from <b>${escapeHtml(inst?inst.name:'')}</b>
+              (${escapeHtml(getStudentClassDisplay(stu))}) has successfully processed the SDG Campaign Evaluation with a performance index of
+              <b>${quiz.score}/${quiz.total} (${quiz.pct}%)</b>, matching operational awareness parameters set by the
+              Hum Hain Pakistan Campaign.
+            </div>
+            <div class="cert-footer">
+              <div class="sig"><div class="line"></div>IGSI Program Coordinator</div>
+              <div class="sig"><div class="line"></div>${fmtDate(quiz.submittedAt)}</div>
+            </div>
+          </div>
+          <svg class="cert-seal" viewBox="0 0 100 100"><circle cx="50" cy="50" r="46" fill="none" stroke="#ECC070" stroke-width="4"/><circle cx="50" cy="50" r="36" fill="none" stroke="#185D35" stroke-width="2"/><text x="50" y="46" text-anchor="middle" font-family="Georgia" font-size="11" fill="#185D35" font-weight="bold">SDG</text><text x="50" y="60" text-anchor="middle" font-family="Georgia" font-size="9" fill="#185D35">CHAMPION</text></svg>
+        </div>
+      </div>
+    `);
+  },
+  downloadCertificate(){
+    const node = document.getElementById('certPage');
+    html2canvas(node, {scale:2, backgroundColor:'#ffffff'}).then(canvas=>{
+      const imgData = canvas.toDataURL('image/png');
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({orientation:'landscape', unit:'mm', format:'a4'});
+      pdf.addImage(imgData, 'PNG', 0, 0, 297, 210);
+      const stu = this.currentStudent();
+      pdf.save(`SDG_Champion_${(stu?getStudentFullName(stu):'student').replace(/\s+/g,'_')}.pdf`);
+    });
+  },
+
+  /* ---------------- CHART DRILL-DOWN POPUPS ---------------- */
+  drillCampus(idx){
+    const inst = DB.institutions[idx];
+    if(!inst) return;
+    const students = DB.students.filter(s=>s.institutionId===inst.id);
+    const ids = students.map(s=>s.id);
+    const quizzes = DB.quizzes.filter(q=>ids.includes(q.studentId));
+    const passCount = quizzes.filter(q=>q.passed).length;
+    const failCount = quizzes.length - passCount;
+    const gCounts = GENDERS.map(g=>students.filter(s=>s.gender===g).length);
+    openDrill(inst.name, `${students.length} registered student(s) · ${quizzes.length} quiz attempt(s)`,
+      `Quiz Pass vs Fail (${pct(passCount, quizzes.length)}% pass)`, 'Gender Split');
+    drillChart('drillLeft', 'dl', drillDoughnutCfg(
+      [`Passed (${pct(passCount,quizzes.length)}%)`, `Not Passed (${pct(failCount,quizzes.length)}%)`],
+      [passCount, failCount], [C_PASS, C_FAIL]));
+    drillChart('drillRight', 'dr', drillDoughnutCfg(GENDERS, gCounts, GENDER_COLORS));
+  },
+  drillPassFail(segIdx, instId){
+    const passed = segIdx === 0;
+    const segLabel = passed ? 'Passed (≥70%)' : 'Not Passed';
+    const all = DB.quizzes.filter(q => !instId || q.institutionId===instId);
+    const seg = all.filter(q => q.passed === passed);
+    const scopeName = instId ? (DB.institutions.find(i=>i.id===instId)||{name:''}).name : 'All Campuses';
+    openDrill(`Quiz Results · ${segLabel}`, `${seg.length} of ${all.length} quiz attempt(s) · ${scopeName}`,
+      instId ? `Gender contribution — ${segLabel}` : `Campus contribution — ${segLabel}`,
+      'Selected Portion vs Rest');
+    drillChart('drillLeft', 'dl', drillContribution(instId, studs => {
+      const ids = studs.map(s=>s.id);
+      return seg.filter(q=>ids.includes(q.studentId)).length;
+    }));
+    drillChart('drillRight', 'dr', drillDoughnutCfg(
+      [segLabel, 'Rest of Attempts'], [seg.length, all.length - seg.length],
+      [passed ? C_PASS : C_FAIL, C_REST]));
+  },
+  drillParticipation(idx, instId){
+    const metricNames = ['Registered','Pre-Survey Attempted','Post-Survey Attempted','Quiz Attempted'];
+    const metric = metricNames[idx];
+    if(!metric) return;
+    const countFn = (studs) => {
+      const ids = studs.map(s=>s.id);
+      if(idx===0) return studs.length;
+      if(idx===1) return new Set(DB.surveys.filter(x=>x.phase==='pre' && ids.includes(x.studentId)).map(x=>x.studentId)).size;
+      if(idx===2) return new Set(DB.surveys.filter(x=>x.phase==='post' && ids.includes(x.studentId)).map(x=>x.studentId)).size;
+      return new Set(DB.quizzes.filter(x=>ids.includes(x.studentId)).map(x=>x.studentId)).size;
+    };
+    const scopeStudents = DB.students.filter(s => !instId || s.institutionId===instId);
+    const segCount = countFn(scopeStudents);
+    const scopeName = instId ? (DB.institutions.find(i=>i.id===instId)||{name:''}).name : 'All Campuses';
+    openDrill(`Participation · ${metric}`, `${segCount} of ${scopeStudents.length} registered student(s) · ${scopeName}`,
+      instId ? `Gender contribution — ${metric}` : `Campus contribution — ${metric}`,
+      `${metric} vs Rest of Registered`);
+    drillChart('drillLeft', 'dl', drillContribution(instId, countFn));
+    drillChart('drillRight', 'dr', drillDoughnutCfg(
+      [metric, idx===0 ? '—' : 'Not Attempted'],
+      [segCount, Math.max(scopeStudents.length - segCount, 0)],
+      [C_NAVY, C_REST]));
+  },
+  drillScoreDist(idx, instId){
+    const bands = [['0–39%',0,39],['40–69%',40,69],['70–89% (Pass)',70,89],['90–100% (Pass)',90,100]];
+    const band = bands[idx];
+    if(!band) return;
+    const all = DB.quizzes.filter(q => !instId || q.institutionId===instId);
+    const seg = all.filter(q => q.pct >= band[1] && q.pct <= band[2]);
+    const scopeName = instId ? (DB.institutions.find(i=>i.id===instId)||{name:''}).name : 'All Campuses';
+    openDrill(`Quiz Scores · ${band[0]}`, `${seg.length} of ${all.length} quiz attempt(s) · ${scopeName}`,
+      instId ? `Gender contribution — ${band[0]}` : `Campus contribution — ${band[0]}`,
+      'Selected Band vs Rest');
+    drillChart('drillLeft', 'dl', drillContribution(instId, studs => {
+      const ids = studs.map(s=>s.id);
+      return seg.filter(q=>ids.includes(q.studentId)).length;
+    }));
+    drillChart('drillRight', 'dr', drillDoughnutCfg(
+      [band[0], 'Rest of Attempts'], [seg.length, all.length - seg.length],
+      [SCORE_BAND_COLORS[idx], C_REST]));
+  },
+
+  /* ---------------- INSTITUTION FOCAL DESK ---------------- */
+  showFocalLogin(){
+    this.setRoleIndicator(null);
+    const instOpts = DB.institutions.map(i=>`<option value="${i.id}">${escapeHtml(i.name)}</option>`).join('');
+    this.el(`
+      <div class="back-link no-print" onclick="App.backToLanding()">&larr; Back</div>
+      <div class="card" style="max-width:480px;margin:0 auto;">
+        <span class="eyebrow">Local Venue Management</span>
+        <h2>Focal Person Gateway</h2>
+        <p class="muted">Provide localized venue configuration credentials along with your access key.</p>
+        <div id="focalError"></div>
+        <label>Institutional Venue</label>
+        <select id="focalInstitution"><option value="">Select campus location…</option>${instOpts}</select>
+        <label>System Authorization Key</label>
+        <input type="text" id="focalKey" placeholder="e.g. HHP-ABCD">
+        <div class="btn-row"><button class="btn btn-gold btn-block" onclick="App.submitFocalLogin()">Launch Dashboard Metrics</button></div>
+      </div>
+    `);
+  },
+  submitFocalLogin(){
+    const instId = document.getElementById('focalInstitution').value;
+    const key = document.getElementById('focalKey').value.trim().toUpperCase();
+    const inst = DB.institutions.find(i=>i.id===instId);
+    if(!inst || !inst.key || inst.key.toUpperCase() !== key){
+      document.getElementById('focalError').innerHTML = `<div class="error-box" style="border-radius:10px;">Verification mismatch. Pinpoint focal settings block configuration parameters.</div>`;
+      return;
+    }
+    this.state.focalInstitutionId = instId;
+    this.showFocalDashboard();
+  },
+  showFocalDashboard(){
+    const inst = DB.institutions.find(i=>i.id===this.state.focalInstitutionId);
+    this.setRoleIndicator('Focal Person · '+inst.name);
+    const stats = institutionStats(inst.id);
+    this.el(`
+      <div class="flex-between">
+        <div><span class="eyebrow">Focal Monitoring System</span><h2>${escapeHtml(inst.name)}</h2></div>
+        <button class="btn btn-outline no-print" onclick="App.logout()">Exit Interface</button>
+      </div>
+      <div class="grid grid-4">
+        ${statTile(stats.registered,'Students Registered')}
+        ${statTile(stats.preCount+' / '+stats.postCount,'Pre / Post Matrices')}
+        ${statTile(stats.quizAttempts,'Quiz Evaluations')}
+        ${statTile(stats.passRate+'%','Certification Ratio', true)}
+      </div>
+
+      <!-- Synchronized Graphical Analysis Layer -->
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>Quiz Pass vs Fail</h3>
+          <div class="chart-box"><canvas id="focalChartPassFail"></canvas></div>
+        </div>
+        <div class="card">
+          <h3>Pre vs Post Awareness</h3>
+          <div class="chart-box"><canvas id="focalChartPrePost"></canvas></div>
+        </div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>Assessment &amp; Quiz Participation</h3>
+          <div class="chart-box"><canvas id="focalChartParticipation"></canvas></div>
+        </div>
+        <div class="card">
+          <h3>Quiz Score Distribution</h3>
+          <div class="chart-box"><canvas id="focalChartScoreDist"></canvas></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="flex-between"><h3>Roster Population Breakdown</h3><span class="muted">${stats.registered} Students Logged</span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name String</th><th>Gender</th><th>Academic Track Data</th><th>Pre Survey</th><th>Post Survey</th><th>Quiz Index</th><th>Certificate Status</th></tr></thead>
+            <tbody>${studentRows(inst.id)}</tbody>
+          </table>
+        </div>
+      </div>
+    `);
+    
+    // Explicit runtime evaluation parsing to avoid canvas render drops visible in Screenshot 2026-07-05 at 7.58.08 PM.jpg
+    setTimeout(() => ensureChartJs(() => renderVenueCharts(inst.id)), 50);
+  },
+
+  /* ---------------- SDG CAMPAIGN TASKFORCE DESK ---------------- */
+  showTaskforceLogin(){
+    this.setRoleIndicator(null);
+    this.el(`
+      <div class="back-link no-print" onclick="App.backToLanding()">&larr; Back</div>
+      <div class="card" style="max-width:440px;margin:0 auto;">
+        <span class="eyebrow">Campaign Audit Deck</span>
+        <h2>Taskforce Interface</h2>
+        <div id="tfError"></div>
+        <label>Security Password</label>
+        <input type="password" id="tfPassword" placeholder="Enter dashboard password token...">
+        <p class="field-hint">Default password: <code>taskforce-2026</code></p>
+        <div class="btn-row"><button class="btn btn-gold btn-block" onclick="App.submitTaskforceLogin()">Authenticate View Matrix</button></div>
+      </div>
+    `);
+  },
+  submitTaskforceLogin(){
+    const pw = document.getElementById('tfPassword').value;
+    if(pw !== DB.taskforcePassword){
+      document.getElementById('tfError').innerHTML = `<div class="error-box" style="border-radius:10px;">Security key parameters invalid.</div>`;
+      return;
+    }
+    this.showTaskforceDashboard();
+  },
+  showTaskforceDashboard(){
+    this.setRoleIndicator('SDG Taskforce Central Hub');
+    const g = globalStats();
+    this.el(`
+      <div class="flex-between">
+        <div><span class="eyebrow">Taskforce Executive System</span><h2>Campaign Topline Indicators</h2></div>
+        <button class="btn btn-outline no-print" onclick="App.logout()">Exit Deck</button>
+      </div>
+      <div class="grid grid-4">
+        ${statTile(g.students,'Students Registered')}
+        ${statTile(g.activeInstitutions+' / '+DB.institutions.length,'Active Campus Assets')}
+        ${statTile(g.quizAttempts,'Evaluations Logged')}
+        ${statTile(g.passRate+'%','Global Certification Yield', true)}
+      </div>
+      
+      <!-- Integrated Visual Reporting Systems -->
+      <div class="grid grid-2">
+        <div class="card"><h3>Registrations by Campus Location</h3><div class="chart-box"><canvas id="chartByInst"></canvas></div></div>
+        <div class="card"><h3>Quiz Pass vs Fail</h3><div class="chart-box"><canvas id="chartPassFail"></canvas></div></div>
+      </div>
+      <div class="card">
+        <h3>Pre vs Post Campaign Shift Delta Array (Awareness Domain Metrics)</h3>
+        <div class="chart-box"><canvas id="chartPrePost"></canvas></div>
+      </div>
+      <div class="grid grid-2">
+        <div class="card"><h3>Assessment &amp; Quiz Participation</h3><div class="chart-box"><canvas id="chartParticipation"></canvas></div></div>
+        <div class="card"><h3>Quiz Score Distribution</h3><div class="chart-box"><canvas id="chartScoreDist"></canvas></div></div>
+      </div>
+
+      <div class="card">
+        <h3>Campus Registry Metrics Table</h3>
+        <div class="table-wrap">
+          <table><thead><tr><th>Institution Description</th><th>Framework Format</th><th>Registered Population</th><th>Quiz Interactions</th><th>Certification Yield</th></tr></thead>
+          <tbody>${DB.institutions.map(i=>{const s=institutionStats(i.id); return `<tr><td>${escapeHtml(i.name)}</td><td>${i.type.toUpperCase()}</td><td>${s.registered}</td><td>${s.quizAttempts}</td><td>${s.passRate}%</td></tr>`;}).join('')}</tbody></table>
+        </div>
+      </div>
+    `);
+    
+    // Explicit dynamic thread handling resolving Screenshot 2026-07-05 at 7.58.08 PM.jpg render bugs
+    setTimeout(() => ensureChartJs(renderGlobalCharts), 50);
+  },
+
+  /* ---------------- IGSI MANAGEMENT FRAMEWORK ---------------- */
+  showIgsiLogin(){
+    this.setRoleIndicator(null);
+    this.el(`
+      <div class="back-link no-print" onclick="App.backToLanding()">&larr; Back</div>
+      <div class="card" style="max-width:440px;margin:0 auto;">
+        <span class="eyebrow">Central Administrative Director</span>
+        <h2>IGSI System Dashboard</h2>
+        <div id="igsiError"></div>
+        <label>System Coordinator Key</label>
+        <input type="password" id="igsiPassword" placeholder="Enter authentication code...">
+        <p class="field-hint">Default password: <code>igsi-2026</code></p>
+        <div class="btn-row"><button class="btn btn-gold btn-block" onclick="App.submitIgsiLogin()">Verify Administrative Clearances</button></div>
+      </div>
+    `);
+  },
+  submitIgsiLogin(){
+    const pw = document.getElementById('igsiPassword').value;
+    if(pw !== DB.igsiPassword){
+      document.getElementById('igsiError').innerHTML = `<div class="error-box" style="border-radius:10px;">Security handshake rejected.</div>`;
+      return;
+    }
+    this.showIgsiDashboard('overview');
+  },
+  igsiTab: 'overview',
+  showIgsiDashboard(tab){
+    this.igsiTab = tab || this.igsiTab;
+    this.setRoleIndicator('IGSI Campaign Operations Board');
+    const g = globalStats();
+    const tabs = ['overview','institutions','questions','analysis','settings','export'];
+    const tabLabels = {overview:'Overview Dashboard', institutions:'Venue Cryptography', questions:'Question Bank ✏️', analysis:'Analysis Engine 📊', settings:'Phase Toggle Gates', export:'Export Utilities'};
+    
+    this.el(`
+      <div class="flex-between">
+        <div><span class="eyebrow">IGSI Global Panel</span><h2>Campaign Administration</h2></div>
+        <button class="btn btn-outline no-print" onclick="App.logout()">Exit Panel</button>
+      </div>
+      <div class="pill-tabs no-print">
+        ${tabs.map(t=>`<div class="pill-tab ${this.igsiTab===t?'active':''}" onclick="App.showIgsiDashboard('${t}')">${tabLabels[t]}</div>`).join('')}
+      </div>
+      <div id="igsiTabContent"></div>
+    `);
+
+    const content = document.getElementById('igsiTabContent');
+    if(this.igsiTab==='overview'){
+      content.innerHTML = `
+        <div class="grid grid-4">
+          ${statTile(g.students,'Students Registered')}
+          ${statTile(g.activeInstitutions+' / '+DB.institutions.length,'Active Campus Assets')}
+          ${statTile(g.quizAttempts,'Evaluations Logged')}
+          ${statTile(g.passRate+'%','Global Certification Yield', true)}
+        </div>
+        <div class="grid grid-2" style="margin-top:20px;">
+          <div class="card"><h3>Registrations by Campus Location</h3><div class="chart-box"><canvas id="chartByInst"></canvas></div></div>
+          <div class="card"><h3>Quiz Pass vs Fail</h3><div class="chart-box"><canvas id="chartPassFail"></canvas></div></div>
+        </div>
+        <div class="grid grid-2">
+          <div class="card"><h3>Assessment &amp; Quiz Participation</h3><div class="chart-box"><canvas id="chartParticipation"></canvas></div></div>
+          <div class="card"><h3>Quiz Score Distribution</h3><div class="chart-box"><canvas id="chartScoreDist"></canvas></div></div>
+        </div>`;
+      setTimeout(() => ensureChartJs(renderGlobalCharts), 50);
+    } else if(this.igsiTab==='institutions'){
+      const editingInst = this.instEditId ? DB.institutions.find(i=>i.id===this.instEditId) : null;
+      content.innerHTML = `
+        <div class="card">
+          <h3>${editingInst ? 'Edit Campus Asset' : 'Register Campus Assets'}</h3>
+          ${editingInst ? `<p class="muted" style="font-size:13px;">Editing: <b>${escapeHtml(editingInst.name)}</b></p>` : ''}
+          <div class="grid grid-3">
+            <div><label>Campus Venue Name</label><input type="text" id="newInstName" placeholder="e.g. Quaid-i-Azam University" value="${editingInst?escapeHtml(editingInst.name):''}"></div>
+            <div><label>Operational Domain</label><select id="newInstType"><option value="school" ${editingInst&&editingInst.type==='school'?'selected':''}>School / College Format</option><option value="university" ${editingInst&&editingInst.type==='university'?'selected':''}>Higher Academic Format</option></select></div>
+            <div style="display:flex;align-items:flex-end;gap:8px;">
+              <button class="btn btn-gold btn-block" onclick="App.addInstitution()">${editingInst?'Save Changes':'Inject Venue Asset'}</button>
+              ${editingInst?`<button class="btn btn-outline" onclick="App.instCancelEdit()">Cancel</button>`:''}
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="flex-between"><h3>Focal Access Keys Registry</h3><span class="muted">${DB.institutions.length} Asset Entities</span></div>
+          <div class="table-wrap">
+            <table><thead><tr><th>Campus Context String</th><th>Track Type</th><th>Key Token Pair</th><th>System Actions</th></tr></thead>
+            <tbody>${DB.institutions.map(i=>{
+              const regCount = DB.students.filter(s=>s.institutionId===i.id).length;
+              return `
+              <tr>
+                <td><b>${escapeHtml(i.name)}</b>${regCount?`<div class="muted" style="font-size:11.5px;">${regCount} student(s) registered</div>`:''}</td>
+                <td>${i.type.toUpperCase()}</td>
+                <td>${i.key?`<span class="tag-key">${i.key}</span>`:'<span class="muted">Key missing</span>'}</td>
+                <td style="white-space:nowrap;">
+                  <button class="btn btn-outline" style="padding:6px 12px;font-size:12.5px;" onclick="App.regenKey('${i.id}')">${i.key?'Regenerate Block':'Initialize Token'}</button>
+                  <button class="btn btn-outline" style="padding:6px 12px;font-size:12.5px;" onclick="App.instEdit('${i.id}')">Edit</button>
+                  <button class="btn btn-danger" style="padding:6px 12px;font-size:12.5px;" onclick="App.deleteInstitution('${i.id}')">Delete</button>
+                </td>
+              </tr>`;}).join('')}</tbody></table>
+          </div>
+        </div>`;
+    } else if(this.igsiTab==='questions'){
+      content.innerHTML = renderQuestionBankView();
+      this.qbTypeChanged();
+    } else if(this.igsiTab==='analysis'){
+      content.innerHTML = renderAnalysisEngineView();
+      setTimeout(() => ensureChartJs(renderAnalysisCharts), 50);
+    } else if(this.igsiTab==='settings'){
+      content.innerHTML = `
+        <div class="card" style="max-width:640px;">
+          <h3>Phase Toggle Gates</h3>
+          <p class="muted">Manage real-time global structural entry metrics. Switching a toggle down completely blocks client-side submission pipelines instantly while retaining structural database logs.</p>
+          ${settingsRow('preOpen','Baseline Pre-Assessment Processing Matrix')}
+          ${settingsRow('postOpen','Post-Campaign Assessment Evaluation')}
+          ${settingsRow('quizOpen','SDG Champion Knowledge Assessment Engine')}
+        </div>`;
+    } else if(this.igsiTab==='export'){
+      content.innerHTML = `
+        <div class="card" style="max-width:520px;">
+          <h3>Complete Database Array Export</h3>
+          <p class="muted">Extract complete demographic multi-relational object tracks to machine-readable Comma-Separated Values (CSV) schemas.</p>
+          <button class="btn btn-gold" onclick="App.exportCsv()">⬇ Compile & Download Spreadsheet Asset</button>
+        </div>`;
+    }
+  },
+  /* ---------------- QUESTION BANK MANAGEMENT (IGSI) ---------------- */
+  qbBank: 'pre',
+  qbEditId: null,
+  qbSwitch(bank){ this.qbBank = bank; this.qbEditId = null; this.showIgsiDashboard('questions'); },
+  qbTypeChanged(){
+    const typeEl = document.getElementById('qbType');
+    const wrap = document.getElementById('qbOptsWrap');
+    if(typeEl && wrap) wrap.style.display = typeEl.value==='likert' ? 'none' : 'block';
+  },
+  qbEdit(id){ this.qbEditId = id; this.showIgsiDashboard('questions'); },
+  qbCancelEdit(){ this.qbEditId = null; this.showIgsiDashboard('questions'); },
+  qbDelete(id){
+    if(!confirm('Delete this question? It will no longer appear in the form. Already-submitted responses are kept.')) return;
+    DB.questions[this.qbBank] = DB.questions[this.qbBank].filter(q=>q.id!==id);
+    if(this.qbEditId===id) this.qbEditId = null;
+    saveData();
+    this.showIgsiDashboard('questions');
+  },
+  qbSave(){
+    const bank = this.qbBank, isQuiz = bank==='quiz';
+    const err = m => { document.getElementById('qbError').innerHTML = `<div class="error-box" style="border-radius:10px;">${m}</div>`; };
+    const text = document.getElementById('qbText').value.trim();
+    const type = document.getElementById('qbType').value;
+    const opts = type==='likert' ? [] : document.getElementById('qbOpts').value.split('\n').map(s=>s.trim()).filter(Boolean);
+    if(!text) return err('Question text is required.');
+    if(type!=='likert' && opts.length<2) return err('Provide at least two options (one per line).');
+    let correct = [];
+    if(isQuiz && type!=='likert'){
+      correct = document.getElementById('qbCorrect').value.split(',')
+        .map(s=>parseInt(s.trim(),10)-1)
+        .filter(n=>!isNaN(n) && n>=0 && n<opts.length);
+      correct = [...new Set(correct)].sort((a,b)=>a-b);
+      if(correct.length===0) return err('Enter valid correct option number(s), counted from 1 (e.g. "2" or "1,3").');
+      if(type==='single') correct = [correct[0]];
+    }
+    const section = isQuiz ? undefined : (document.getElementById('qbSection').value.trim() || 'General');
+    if(this.qbEditId){
+      const q = DB.questions[bank].find(q=>q.id===this.qbEditId);
+      if(q){
+        Object.assign(q, {text, type, opts});
+        if(isQuiz) q.correct = correct; else q.section = section;
+      }
+      this.qbEditId = null;
+    } else {
+      const q = {id: uid('q'), type, text, opts};
+      if(isQuiz) q.correct = correct; else q.section = section;
+      DB.questions[bank].push(q);
+    }
+    saveData();
+    this.showIgsiDashboard('questions');
+  },
+  qbMove(id, dir){
+    const arr = DB.questions[this.qbBank];
+    const i = arr.findIndex(q=>q.id===id);
+    const j = i + dir;
+    if(i<0 || j<0 || j>=arr.length) return;
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+    saveData();
+    this.showIgsiDashboard('questions');
+  },
+
+  generateAnalysisReport(){
+    const btn = document.getElementById('genReportBtn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Generating Report…'; }
+    const done = () => { if(btn){ btn.disabled = false; btn.innerHTML = '⬇ Generate Report (PDF)'; } };
+    ensureChartJs(() => {
+      buildAnalysisReportPdf().then(done).catch(e => { alert('Report generation failed: ' + e.message); done(); });
+    });
+  },
+
+  instEditId: null,
+  addInstitution(){
+    const name = document.getElementById('newInstName').value.trim();
+    const type = document.getElementById('newInstType').value;
+    if(!name) return;
+    if(this.instEditId){
+      const inst = DB.institutions.find(i=>i.id===this.instEditId);
+      if(inst){ inst.name = name; inst.type = type; }
+      this.instEditId = null;
+    } else {
+      DB.institutions.push({id:uid('inst'), name, type, key:null});
+    }
+    saveData();
+    this.showIgsiDashboard('institutions');
+  },
+  instEdit(id){ this.instEditId = id; this.showIgsiDashboard('institutions'); },
+  instCancelEdit(){ this.instEditId = null; this.showIgsiDashboard('institutions'); },
+  deleteInstitution(id){
+    const regCount = DB.students.filter(s=>s.institutionId===id).length;
+    if(regCount > 0){
+      alert(`Cannot delete this institution: ${regCount} student(s) are registered under it. Their records would be orphaned.`);
+      return;
+    }
+    if(!confirm('Delete this institution from the campaign list? This cannot be undone.')) return;
+    DB.institutions = DB.institutions.filter(i=>i.id!==id);
+    if(this.instEditId===id) this.instEditId = null;
+    saveData();
+    this.showIgsiDashboard('institutions');
+  },
+  toggleSetting(key){
+    DB.settings[key] = !DB.settings[key];
+    saveData();
+    this.showIgsiDashboard('settings');
+  },
+  setSetting(key, val){
+    DB.settings[key] = !!val;
+    saveData();
+    this.showIgsiDashboard('settings');
+  },
+  regenKey(instId){
+    const inst = DB.institutions.find(i=>i.id===instId);
+    inst.key = genKey();
+    saveData();
+    this.showIgsiDashboard('institutions');
+  },
+  exportCsv(){
+    const rows = [['First Name', 'Middle Name', 'Last Name', 'Gender Segment', 'Campus Institution', 'Domain Type', 'Class Tracking Designation', 'Section/Semester Term', 'Pre-Survey Completed', 'Post-Survey Completed', 'High Quiz Score Marks', 'Quiz Accumulative Percentage', 'Certification Delivery Status']];
+    DB.students.forEach(stu=>{
+      const inst = DB.institutions.find(i=>i.id===stu.institutionId);
+      const pre = DB.surveys.some(s=>s.studentId===stu.id && s.phase==='pre') ? 'TRUE' : 'FALSE';
+      const post = DB.surveys.some(s=>s.studentId===stu.id && s.phase==='post') ? 'TRUE' : 'FALSE';
+      const quiz = DB.quizzes.filter(q=>q.studentId===stu.id).sort((a,b)=>new Date(b.submittedAt)-new Date(a.submittedAt))[0];
+      rows.push([stu.firstName, stu.middleName||'', stu.lastName, stu.gender, inst?inst.name:'', inst?inst.type:'', stu.className, stu.sectionName, pre, post, quiz?`${quiz.score}/${quiz.total}`:'', quiz?quiz.pct+'%':'', quiz&&quiz.passed?'ISSUED':'LOCKED']);
+    });
+    const csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'HHP_SDG_Campaign_GlobalData.csv'; a.click();
+  }
+};
+
+/* ============================================================
+   ADVANCED CORE ANALYTICS ENGINE CAPABILITIES
+   ============================================================ */
+function renderQuestionBankView(){
+  const bank = App.qbBank;
+  const list = DB.questions[bank] || [];
+  const editing = App.qbEditId ? list.find(q=>q.id===App.qbEditId) : null;
+  const isQuiz = bank==='quiz';
+  const typeLabel = {single:'Single Select', multi:'Multi Select', likert:'Likert Scale'};
+  const bankTabs = [['pre','Pre-Assessment'],['post','Post-Assessment'],['quiz','SDG Quiz']];
+  const bankName = bankTabs.find(b=>b[0]===bank)[1];
+  return `
+    <div class="pill-tabs no-print">
+      ${bankTabs.map(([k,l])=>`<div class="pill-tab ${bank===k?'active':''}" onclick="App.qbSwitch('${k}')">${l} (${(DB.questions[k]||[]).length})</div>`).join('')}
+    </div>
+    <div class="card">
+      <span class="eyebrow">${editing?'Edit Existing Question':'Create New Question'}</span>
+      <h3>${escapeHtml(bankName)} — ${editing?'Edit Question':'Add Question'}</h3>
+      <div id="qbError"></div>
+      <label>Question Text</label>
+      <textarea id="qbText" rows="2" placeholder="Type the question statement…">${editing?escapeHtml(editing.text):''}</textarea>
+      <div class="grid grid-2" style="gap:12px; margin-bottom:0;">
+        <div>
+          <label>Question Type</label>
+          <select id="qbType" onchange="App.qbTypeChanged()">
+            <option value="single" ${editing&&editing.type==='single'?'selected':''}>Single Select (choose one)</option>
+            <option value="multi" ${editing&&editing.type==='multi'?'selected':''}>Multi Select (choose all that apply)</option>
+            <option value="likert" ${editing&&editing.type==='likert'?'selected':''}>Likert Scale (Strongly Disagree → Strongly Agree)</option>
+          </select>
+        </div>
+        ${isQuiz ? '' : `<div><label>Section Grouping</label><input type="text" id="qbSection" placeholder="e.g. Awareness" value="${editing?escapeHtml(editing.section||''):''}"><div class="field-hint">Questions in the “Awareness” section drive the Pre vs Post Awareness charts.</div></div>`}
+      </div>
+      <div id="qbOptsWrap">
+        <label>Answer Options <span class="muted" style="font-weight:400;">(one per line)</span></label>
+        <textarea id="qbOpts" rows="4" placeholder="Option A&#10;Option B&#10;Option C">${editing&&editing.opts?escapeHtml(editing.opts.join('\n')):''}</textarea>
+        ${isQuiz ? `<label>Correct Option Number(s)</label>
+        <input type="text" id="qbCorrect" placeholder="e.g. 2  —  or for multi-select: 1,3" value="${editing&&editing.correct?editing.correct.map(n=>n+1).join(','):''}">
+        <div class="field-hint">Counted from 1. Single select: one number. Multi select: comma-separated numbers; the student must select exactly those.</div>` : ''}
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-gold" onclick="App.qbSave()">${editing?'Save Changes':'+ Add Question'}</button>
+        ${editing?`<button class="btn btn-outline" onclick="App.qbCancelEdit()">Cancel Edit</button>`:''}
+      </div>
+    </div>
+    <div class="card">
+      <div class="flex-between"><h3>${escapeHtml(bankName)} — Current Questions</h3><span class="muted">${list.length} question(s)</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:36px;">#</th><th>Question</th><th>Type</th><th>${isQuiz?'Correct':'Section'}</th><th style="width:210px;">Actions</th></tr></thead>
+          <tbody>
+          ${list.length===0 ? `<tr><td colspan="5" class="muted">No questions configured yet. Add the first one above.</td></tr>` :
+            list.map((q,i)=>`<tr>
+              <td>${i+1}</td>
+              <td><b>${escapeHtml(q.text)}</b>${q.type!=='likert'&&q.opts&&q.opts.length?`<div class="muted" style="font-size:12px;">${q.opts.map(o=>escapeHtml(o)).join(' · ')}</div>`:''}</td>
+              <td><span class="badge badge-neutral">${typeLabel[q.type]||q.type}</span></td>
+              <td>${isQuiz ? (q.type==='likert'?'—':(q.correct||[]).map(n=>n+1).join(', ')) : escapeHtml(q.section||'—')}</td>
+              <td style="white-space:nowrap;">
+                <button class="btn btn-outline" style="padding:5px 9px;font-size:12px;" onclick="App.qbMove('${q.id}',-1)" title="Move up">↑</button>
+                <button class="btn btn-outline" style="padding:5px 9px;font-size:12px;" onclick="App.qbMove('${q.id}',1)" title="Move down">↓</button>
+                <button class="btn btn-outline" style="padding:5px 10px;font-size:12px;" onclick="App.qbEdit('${q.id}')">Edit</button>
+                <button class="btn btn-danger" style="padding:5px 10px;font-size:12px;" onclick="App.qbDelete('${q.id}')">Delete</button>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderAnalysisEngineView() {
+  const preSurveys = DB.surveys.filter(s=>s.phase==='pre');
+  const postSurveys = DB.surveys.filter(s=>s.phase==='post');
+  const getAvgAwareness = (surveys, phase) => {
+    if(surveys.length === 0) return 0;
+    const awarenessIds = awarenessLikertIds(phase);
+    let sum=0, total=0;
+    surveys.forEach(s => { awarenessIds.forEach(id => { if(s.answers[id] != null){ sum += s.answers[id]; total++; } }); });
+    return total ? sum/total : 0;
+  };
+
+  const preAvg = getAvgAwareness(preSurveys, 'pre');
+  const postAvg = getAvgAwareness(postSurveys, 'post');
+  const rawDelta = postAvg - preAvg;
+  const growthPct = preAvg ? (rawDelta / preAvg) * 100 : 0;
+
+  const segments = {
+    gender: { Female: {reg:0, pass:0, qz:0}, Male: {reg:0, pass:0, qz:0}, Other: {reg:0, pass:0, qz:0} },
+    type: { school: {reg:0, pass:0, qz:0}, university: {reg:0, pass:0, qz:0} },
+    class: {}
+  };
+
+  DB.students.forEach(stu => {
+    const gen = segments.gender[stu.gender] ? stu.gender : 'Other';
+    segments.gender[gen].reg++;
+
+    const inst = DB.institutions.find(i=>i.id===stu.institutionId);
+    const t = inst ? inst.type : 'school';
+    segments.type[t].reg++;
+
+    const clsKey = stu.className || 'Unknown Tracking Target';
+    if(!segments.class[clsKey]) segments.class[clsKey] = {reg:0, pass:0, qz:0};
+    segments.class[clsKey].reg++;
+
+    const sqz = DB.quizzes.filter(q=>q.studentId===stu.id).sort((a,b)=>new Date(b.submittedAt)-new Date(a.submittedAt))[0];
+    if(sqz) {
+      segments.gender[gen].qz++; if(sqz.passed) segments.gender[gen].pass++;
+      segments.type[t].qz++; if(sqz.passed) segments.type[t].pass++;
+      segments.class[clsKey].qz++; if(sqz.passed) segments.class[clsKey].pass++;
+    }
+  });
+
+  return `
+    <div class="card">
+      <div class="flex-between">
+        <div>
+          <span class="eyebrow" style="color:var(--forest);">Advanced Analysis Engine Module</span>
+          <h2>SDG Shift Tracking Analysis Engine</h2>
+          <p class="muted">Live analytics matrix cross-calculating shift progression markers and comparative segmentation targets.</p>
+        </div>
+        <button class="btn btn-gold no-print" id="genReportBtn" onclick="App.generateAnalysisReport()">⬇ Generate Report (PDF)</button>
+      </div>
+
+      <div class="grid grid-3" style="margin-top:20px;">
+        <div class="stat-tile">
+          <div class="num">${preAvg.toFixed(2)} / 5.0</div>
+          <div class="label">Baseline Avg Awareness</div>
+        </div>
+        <div class="stat-tile">
+          <div class="num">${postAvg.toFixed(2)} / 5.0</div>
+          <div class="label">Post-Campaign Avg Awareness</div>
+        </div>
+        <div class="stat-tile gold">
+          <div class="num">${rawDelta >= 0 ? '+' : ''}${rawDelta.toFixed(2)}</div>
+          <div class="label">Awareness Shift Delta (${growthPct.toFixed(1)}% Growth)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Pre vs Post Assessment Results by Section</h3>
+        <div class="chart-box"><canvas id="analysisPrePostSections"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>Quiz Attempts &amp; Passes by Gender</h3>
+        <div class="chart-box"><canvas id="analysisGenderYield"></canvas></div>
+      </div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Segment Analysis By Gender</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Gender Matrix Track</th><th>Registered Count</th><th>Active Quiz Tracks</th><th>Certification Yield</th></tr></thead>
+            <tbody>
+              ${Object.keys(segments.gender).map(k => {
+                const s = segments.gender[k];
+                return `<tr><td><b>${k}</b></td><td>${s.reg}</td><td>${s.qz}</td><td>${pct(s.pass, s.qz)}%</td></tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Segment Analysis By Institution Type</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Framework Format</th><th>Registered Count</th><th>Active Quiz Tracks</th><th>Certification Yield</th></tr></thead>
+            <tbody>
+              <tr><td><b>School / College Infrastructure</b></td><td>${segments.type.school.reg}</td><td>${segments.type.school.qz}</td><td>${pct(segments.type.school.pass, segments.type.school.qz)}%</td></tr>
+              <tr><td><b>Higher University Campuses</b></td><td>${segments.type.university.reg}</td><td>${segments.type.university.qz}</td><td>${pct(segments.type.university.pass, segments.type.university.qz)}%</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Segment Analysis By Target Class & Enrolled Program</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Designated Class / Academic Program Cohort</th><th>Registered Count</th><th>Quiz Evaluations</th><th>Pass Ratio Marks</th></tr></thead>
+          <tbody>
+            ${Object.keys(segments.class).length === 0 ? `<tr><td colspan="4" class="muted">No demographic records currently locked within database array parameters.</td></tr>` : 
+              Object.keys(segments.class).map(k => {
+                const s = segments.class[k];
+                return `<tr><td><b>${escapeHtml(k)}</b></td><td>${s.reg}</td><td>${s.qz}</td><td>${pct(s.pass, s.qz)}%</td></tr>`;
+              }).join('')
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+/* ============================================================
+   INTERFACE FORMATTING HELPERS
+   ============================================================ */
+function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function icon(kind){
+  const paths = {
+    student: '<circle cx="20" cy="14" r="7"/><path d="M6 34c0-8 6-13 14-13s14 5 14 13"/>',
+    focal: '<rect x="6" y="10" width="28" height="22" rx="2"/><path d="M6 16h28"/><path d="M13 22h6M13 27h10"/>',
+    taskforce: '<path d="M20 5l13 5v9c0 9-6 14-13 16-7-2-13-7-13-16v-9z"/>',
+    igsi: '<circle cx="20" cy="20" r="15"/><path d="M20 12v8l6 4"/>'
+  };
+  return `<svg class="icon" viewBox="0 0 40 40" fill="none" stroke="#185D35" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${paths[kind]}</svg>`;
+}
+function taskCard(title, done, desc, actionHtml){
+  return `<div class="card card-tight">
+    <div class="flex-between"><h3 style="font-size:15px;">${title}</h3>${done?'<span class="badge badge-pass">Logged</span>':'<span class="badge badge-neutral">Pending</span>'}</div>
+    <p class="muted" style="font-size:13px;">${desc}</p>
+    ${actionHtml}
+  </div>`;
+}
+function settingsRow(key, label){
+  const isOpen = DB.settings[key];
+  return `<div class="flex-between" style="padding:14px 0;border-bottom:1px solid var(--line);">
+    <div>
+      <div style="font-weight:600;color:var(--forest-dark);">${label}</div>
+      <div class="muted" style="font-size:12.5px;">State Parameter: ${isOpen ? 'ON (Submissions open)' : 'OFF (Submissions closed)'}</div>
+    </div>
+    <div class="seg-toggle">
+      <button class="${isOpen?'active-on':''}" onclick="App.setSetting('${key}',true)">ON</button>
+      <button class="${!isOpen?'active-off':''}" onclick="App.setSetting('${key}',false)">OFF</button>
+    </div>
+  </div>`;
+}
+function statTile(value, label, gold){
+  return `<div class="stat-tile ${gold?'gold':''}"><div class="num">${value}</div><div class="label">${label}</div></div>`;
+}
+function likertRow(qid, bucket){
+  return `<div class="likert-row">${LIKERT_LABELS.map((l,idx)=>`<div class="likert-opt" data-qid="${qid}" data-val="${idx+1}" onclick="App.selectLikert('${qid}',${idx+1},'${bucket||'surveyDraft'}')">${l}</div>`).join('')}</div>`;
+}
+function mcqRows(qid, opts, bucket){
+  return opts.map((o,idx)=>`<div class="opt" data-qid="${qid}" data-val="${idx}" onclick="App.selectOption('${bucket}','${qid}',${idx})"><input type="radio" name="${qid}" style="pointer-events:none;">${escapeHtml(o)}</div>`).join('');
+}
+function multiRows(qid, opts, bucket){
+  return opts.map((o,idx)=>`<div class="opt" data-qid="${qid}" data-val="${idx}" onclick="App.toggleMulti('${bucket}','${qid}',${idx})"><input type="checkbox" name="${qid}" style="pointer-events:none;">${escapeHtml(o)}</div>`).join('');
+}
+function scoreRingBlock(p, score, total, passed){
+  const r=52, c=2*Math.PI*r, offset = c - (c*p/100);
+  return `<div class="ring-wrap" style="justify-content:center;">
+    <svg width="140" height="140" viewBox="0 0 140 140">
+      <circle cx="70" cy="70" r="${r}" fill="none" stroke="#E7F0EA" stroke-width="12"/>
+      <circle cx="70" cy="70" r="${r}" fill="none" stroke="${passed?'#185D35':'#C99A3E'}" stroke-width="12" stroke-linecap="round"
+        stroke-dasharray="${c}" stroke-dashoffset="${offset}" transform="rotate(-90 70 70)"/>
+      <text x="70" y="76" text-anchor="middle" class="ring-score">${p}%</text>
+    </svg>
+    <div style="text-align:left;">
+      <div style="font-family:'Poppins';font-weight:700;font-size:16px;color:var(--forest-dark);">${score} / ${total} Correct Marks</div>
+      <div class="badge ${passed?'badge-pass':'badge-fail'}" style="margin-top:6px;">${passed?'Verification Passed':'Minimum Limit Not Reached'}</div>
+    </div>
+  </div>`;
+}
+function studentRows(instId){
+  const students = DB.students.filter(s=>s.institutionId===instId);
+  if(students.length===0) return `<tr><td colspan="7" class="muted">No demographic records matched for this specific campus block target.</td></tr>`;
+  return students.map(stu=>{
+    const pre = DB.surveys.some(s=>s.studentId===stu.id && s.phase==='pre');
+    const post = DB.surveys.some(s=>s.studentId===stu.id && s.phase==='post');
+    const quiz = DB.quizzes.filter(q=>q.studentId===stu.id).sort((a,b)=>new Date(b.submittedAt)-new Date(a.submittedAt))[0];
+    return `<tr>
+      <td><b>${escapeHtml(getStudentFullName(stu))}</b></td>
+      <td>${escapeHtml(stu.gender)}</td>
+      <td>${escapeHtml(getStudentClassDisplay(stu))}</td>
+      <td>${pre?'<span class="badge badge-pass">Logged</span>':'<span class="badge badge-neutral">Pending</span>'}</td>
+      <td>${post?'<span class="badge badge-pass">Logged</span>':'<span class="badge badge-neutral">Pending</span>'}</td>
+      <td>${quiz?quiz.score+'/'+quiz.total+' ('+quiz.pct+'%)':'—'}</td>
+      <td>${quiz&&quiz.passed?'<span class="badge badge-pass">Issued</span>':'<span class="badge badge-neutral">Locked</span>'}</td>
+    </tr>`;
+  }).join('');
+}
+
+/* ============================================================
+   DATA CALCULATION METRICS ENGINE
+   ============================================================ */
+function institutionStats(instId){
+  const students = DB.students.filter(s=>s.institutionId===instId);
+  const studentIds = students.map(s=>s.id);
+  const preCount = DB.surveys.filter(s=>studentIds.includes(s.studentId) && s.phase==='pre').length;
+  const postCount = DB.surveys.filter(s=>studentIds.includes(s.studentId) && s.phase==='post').length;
+  const quizzes = DB.quizzes.filter(q=>studentIds.includes(q.studentId));
+  const passed = quizzes.filter(q=>q.passed).length;
+  return {
+    registered: students.length,
+    preCount, postCount,
+    quizAttempts: quizzes.length,
+    passRate: pct(passed, quizzes.length)
+  };
+}
+function globalStats(){
+  const quizzes = DB.quizzes;
+  const passed = quizzes.filter(q=>q.passed).length;
+  const activeInstitutions = new Set(DB.students.map(s=>s.institutionId)).size;
+  return {
+    students: DB.students.length,
+    activeInstitutions,
+    quizAttempts: quizzes.length,
+    passRate: pct(passed, quizzes.length)
+  };
+}
+
+/* ============================================================
+   GRAPHICAL RUNTIME INSTANTIATION PARSER
+   ============================================================ */
+/* Ensure Chart.js is available; fall back to backup CDNs, else show a visible notice */
+function ensureChartJs(cb){
+  if(window.Chart){ cb(); return; }
+  const sources = [
+    'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.js',
+    'https://unpkg.com/chart.js@4.4.4/dist/chart.umd.js'
+  ];
+  let i = 0;
+  const tryNext = () => {
+    if(window.Chart){ cb(); return; }
+    if(i >= sources.length){ markChartBoxesUnavailable(); return; }
+    const s = document.createElement('script');
+    s.src = sources[i++];
+    s.onload = () => { if(window.Chart) cb(); else tryNext(); };
+    s.onerror = tryNext;
+    document.head.appendChild(s);
+  };
+  tryNext();
+}
+function markChartBoxesUnavailable(){
+  document.querySelectorAll('.chart-box').forEach(box=>{
+    box.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--slate);font-size:13px;text-align:center;padding:0 16px;">⚠ Charts could not be loaded because the Chart.js library is unreachable.<br>Please check your internet connection (or firewall) and refresh the page.</div>';
+  });
+}
+
+function cleanChartRegistry(){
+  Object.values(App.charts).forEach(ch => { if(ch && typeof ch.destroy === 'function') ch.destroy(); });
+  App.charts = {};
+  closeDrill();
+}
+
+/* ============================================================
+   INTERACTIVE DRILL-DOWN FLOATING WINDOW
+   ============================================================ */
+App.modalCharts = {};
+function closeDrill(){
+  Object.values(App.modalCharts).forEach(ch => { if(ch && typeof ch.destroy === 'function') ch.destroy(); });
+  App.modalCharts = {};
+  const m = document.getElementById('drillOverlay');
+  if(m) m.remove();
+}
+function openDrill(title, subtitle, leftTitle, rightTitle){
+  closeDrill();
+  const div = document.createElement('div');
+  div.className = 'modal-overlay';
+  div.id = 'drillOverlay';
+  div.innerHTML = `
+    <div class="modal-card">
+      <div class="flex-between" style="align-items:flex-start;">
+        <div>
+          <span class="eyebrow">Interactive Drill-Down</span>
+          <h3 style="margin-bottom:2px;">${escapeHtml(title)}</h3>
+          <span class="muted" style="font-size:12.5px;">${escapeHtml(subtitle)}</span>
+        </div>
+        <button class="modal-close" onclick="closeDrill()" title="Close">✕</button>
+      </div>
+      <div class="modal-grid">
+        <div><h4 style="text-align:center;font-size:14px;">${escapeHtml(leftTitle)}</h4><div class="chart-box"><canvas id="drillLeft"></canvas></div></div>
+        <div><h4 style="text-align:center;font-size:14px;">${escapeHtml(rightTitle)}</h4><div class="chart-box"><canvas id="drillRight"></canvas></div></div>
+      </div>
+    </div>`;
+  div.addEventListener('click', e => { if(e.target === div) closeDrill(); });
+  document.body.appendChild(div);
+}
+function drillChart(canvasId, key, cfg){
+  const c = document.getElementById(canvasId);
+  if(c && window.Chart) App.modalCharts[key] = new Chart(c, cfg);
+}
+function drillBarCfg(labels, data, colors){
+  return {
+    type:'bar',
+    data:{ labels, datasets:[{ label:'Count', data, backgroundColor:colors, borderRadius:5 }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+      scales:{ x:{ticks:{font:{size:9}}}, y:{beginAtZero:true, ticks:{precision:0}} } }
+  };
+}
+function drillDoughnutCfg(labels, data, colors){
+  return {
+    type:'doughnut',
+    data:{ labels, datasets:[{ data, backgroundColor:colors }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}} }
+  };
+}
+/* ============================================================
+   ANALYSIS ENGINE CHARTS + PDF REPORT
+   ============================================================ */
+function surveySectionNames(){
+  const names = [];
+  ['pre','post'].forEach(ph => surveyQuestions(ph).forEach(q=>{
+    if(q.type==='likert'){ const s = q.section || 'General'; if(!names.includes(s)) names.push(s); }
+  }));
+  return names;
+}
+function sectionAverages(phase, sections){
+  const surveys = DB.surveys.filter(s=>s.phase===phase);
+  const bank = surveyQuestions(phase).filter(q=>q.type==='likert');
+  return sections.map(sec=>{
+    const ids = bank.filter(q=>(q.section||'General')===sec).map(q=>q.id);
+    let sum=0, n=0;
+    surveys.forEach(s=>ids.forEach(id=>{ if(s.answers[id]!=null){ sum+=s.answers[id]; n++; } }));
+    return n ? +(sum/n).toFixed(2) : 0;
+  });
+}
+function globalAwarenessAvg(phase){
+  const surveys = DB.surveys.filter(s=>s.phase===phase);
+  if(!surveys.length) return 0;
+  const ids = awarenessLikertIds(phase);
+  let sum=0, n=0;
+  surveys.forEach(s=>ids.forEach(id=>{ if(s.answers[id]!=null){ sum+=s.answers[id]; n++; } }));
+  return n ? sum/n : 0;
+}
+function analysisPrePostCfg(){
+  const sections = surveySectionNames();
+  return { type:'bar',
+    data:{ labels:sections, datasets:[
+      { label:'Pre-Assessment Avg (1-5)', data:sectionAverages('pre',sections), backgroundColor:C_YELLOW, borderRadius:5 },
+      { label:'Post-Assessment Avg (1-5)', data:sectionAverages('post',sections), backgroundColor:C_PASS, borderRadius:5 }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false, scales:{ y:{ beginAtZero:true, max:5 } } } };
+}
+function analysisGenderCfg(){
+  const rows = GENDERS.map(g=>{
+    const ids = DB.students.filter(s=>s.gender===g).map(s=>s.id);
+    const qz = DB.quizzes.filter(q=>ids.includes(q.studentId));
+    return { attempts: qz.length, passed: qz.filter(q=>q.passed).length };
+  });
+  return { type:'bar',
+    data:{ labels:GENDERS, datasets:[
+      { label:'Quiz Attempts', data:rows.map(r=>r.attempts), backgroundColor:C_BLUE, borderRadius:5 },
+      { label:'Passed', data:rows.map(r=>r.passed), backgroundColor:C_PASS, borderRadius:5 }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false, scales:{ y:{ beginAtZero:true, ticks:{precision:0} } } } };
+}
+function renderAnalysisCharts(){
+  if(!window.Chart) return;
+  cleanChartRegistry();
+  const c1 = document.getElementById('analysisPrePostSections');
+  if(c1) App.charts.analysisPrePost = new Chart(c1, analysisPrePostCfg());
+  const c2 = document.getElementById('analysisGenderYield');
+  if(c2) App.charts.analysisGender = new Chart(c2, analysisGenderCfg());
+}
+
+/* Render a chart config off-screen and return it as a PNG data-URL */
+function offscreenChartImage(cfg, w, h){
+  return new Promise(resolve=>{
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    cv.style.cssText = 'position:fixed;left:-10000px;top:0;';
+    document.body.appendChild(cv);
+    const c = { type:cfg.type, data:cfg.data,
+      options: Object.assign({}, cfg.options, {responsive:false, maintainAspectRatio:false, animation:false, devicePixelRatio:2}) };
+    const ch = new Chart(cv, c);
+    setTimeout(()=>{
+      const img = ch.toBase64Image('image/png', 1.0);
+      ch.destroy(); cv.remove();
+      resolve(img);
+    }, 80);
+  });
+}
+
+async function buildAnalysisReportPdf(){
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({unit:'mm', format:'a4'});
+  const W = 210, M = 16;
+  let y = 0;
+
+  const pageBreak = need => { if(y + need > 280){ pdf.addPage(); y = 20; } };
+  const H = t => { pageBreak(14); pdf.setFont('helvetica','bold'); pdf.setFontSize(13); pdf.setTextColor(24,93,53); pdf.text(t, M, y); y += 7; };
+  const P = t => {
+    pdf.setFont('helvetica','normal'); pdf.setFontSize(10.5); pdf.setTextColor(30,43,34);
+    const lines = pdf.splitTextToSize(t, W - 2*M);
+    pageBreak(lines.length*5.2 + 4);
+    pdf.text(lines, M, y); y += lines.length*5.2 + 4;
+  };
+
+  // Header band
+  pdf.setFillColor(24,93,53); pdf.rect(0,0,W,30,'F');
+  pdf.setTextColor(255,255,255); pdf.setFont('helvetica','bold'); pdf.setFontSize(16);
+  pdf.text('Hum Hain Pakistan - SDG Youth Campaign', M, 13);
+  pdf.setFont('helvetica','normal'); pdf.setFontSize(10);
+  pdf.text('Analysis Engine Report  |  Generated '+new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'}), M, 21);
+  y = 40;
+
+  const g = globalStats();
+  const p = participationCounts(null);
+  const preS = DB.surveys.filter(s=>s.phase==='pre').length;
+  const postS = DB.surveys.filter(s=>s.phase==='post').length;
+  const passCount = DB.quizzes.filter(q=>q.passed).length;
+  const failCount = DB.quizzes.length - passCount;
+  const preAvg = globalAwarenessAvg('pre'), postAvg = globalAwarenessAvg('post');
+  const delta = postAvg - preAvg;
+  const growth = preAvg ? (delta/preAvg)*100 : 0;
+  const avgPct = DB.quizzes.length ? Math.round(DB.quizzes.reduce((a,q)=>a+q.pct,0)/DB.quizzes.length) : 0;
+
+  // 1. Toplines
+  H('1. Campaign Toplines');
+  P(`A total of ${g.students} student(s) are registered across ${g.activeInstitutions} active campus(es), out of ${DB.institutions.length} institutions enrolled in the campaign. The campaign has logged ${preS} pre-assessment and ${postS} post-assessment survey submissions, and ${g.quizAttempts} SDG quiz attempt(s) by ${p.quiz} unique student(s). The overall certification yield (quiz pass rate) currently stands at ${g.passRate}%.`);
+
+  // 2. Assessment survey
+  H('2. Assessment Survey - Pre vs Post');
+  P(`${p.pre} student(s) attempted the pre-assessment and ${p.post} the post-assessment. Average awareness moved from ${preAvg.toFixed(2)}/5.0 at baseline to ${postAvg.toFixed(2)}/5.0 after the campaign - a shift of ${delta>=0?'+':''}${delta.toFixed(2)} points (${growth.toFixed(1)}% growth). The chart below compares average Likert scores by survey section (1 = Strongly Disagree, 5 = Strongly Agree).`);
+  const imgSections = await offscreenChartImage(analysisPrePostCfg(), 900, 420);
+  pageBreak(86);
+  pdf.addImage(imgSections, 'PNG', M, y, W-2*M, 80); y += 86;
+
+  // 3. Quiz
+  H('3. SDG Knowledge Quiz');
+  P(`Of ${g.quizAttempts} quiz attempt(s) recorded, ${passCount} passed the 70% threshold and ${failCount} did not, giving a pass rate of ${g.passRate}%. The average score across all attempts is ${avgPct}%. The charts below show the overall pass/fail split and the distribution of scores.`);
+  const imgPassFail = await offscreenChartImage(drillDoughnutCfg(['Passed (70%+)','Not Passed'], [passCount, failCount], [C_PASS, C_FAIL]), 440, 340);
+  const imgDist = await offscreenChartImage(drillBarCfg(['0-39%','40-69%','70-89%','90-100%'], scoreDistribution(DB.quizzes), SCORE_BAND_COLORS), 440, 340);
+  pageBreak(72);
+  const half = (W - 2*M - 6)/2;
+  pdf.addImage(imgPassFail, 'PNG', M, y, half, 66);
+  pdf.addImage(imgDist, 'PNG', M + half + 6, y, half, 66);
+  y += 72;
+  P(`Quiz attempts and passes by gender are shown below.`);
+  const imgGender = await offscreenChartImage(analysisGenderCfg(), 900, 380);
+  pageBreak(76);
+  pdf.addImage(imgGender, 'PNG', M, y, W-2*M, 70); y += 76;
+
+  // 4. Campus contribution
+  H('4. Campus Contribution');
+  const imgCampus = await offscreenChartImage(drillBarCfg(
+    DB.institutions.map(i=>shortName(i.name)),
+    DB.institutions.map(i=>DB.students.filter(s=>s.institutionId===i.id).length),
+    instColors()), 900, 420);
+  pageBreak(86);
+  pdf.addImage(imgCampus, 'PNG', M, y, W-2*M, 80); y += 86;
+  const top = DB.institutions
+    .map(i=>({name:i.name, s:institutionStats(i.id)}))
+    .filter(x=>x.s.registered>0)
+    .sort((a,b)=>b.s.registered-a.s.registered)
+    .slice(0,5);
+  if(top.length){
+    P('Leading campuses by registration: ' + top.map((x,k)=>`${k+1}. ${x.name} (${x.s.registered} registered, ${x.s.quizAttempts} quiz attempts, ${x.s.passRate}% pass rate)`).join('; ') + '.');
+  } else {
+    P('No student registrations have been recorded yet.');
+  }
+
+  // Footer with page numbers
+  const pages = pdf.getNumberOfPages();
+  for(let i=1; i<=pages; i++){
+    pdf.setPage(i);
+    pdf.setFont('helvetica','normal'); pdf.setFontSize(8.5); pdf.setTextColor(120,120,120);
+    pdf.text(`Hum Hain Pakistan - SDG Youth Campaign Analysis Report  |  Page ${i} of ${pages}`, W/2, 292, {align:'center'});
+  }
+  pdf.save('HHP_SDG_Analysis_Report.pdf');
+}
+
+/* Left-side "who contributes" chart: by campus (global) or by gender (single venue) */
+function drillContribution(instId, countFn){
+  if(instId){
+    const students = DB.students.filter(s=>s.institutionId===instId);
+    const counts = GENDERS.map(g => countFn(students.filter(s=>s.gender===g)));
+    return drillBarCfg(GENDERS, counts, GENDER_COLORS);
+  }
+  const labels = DB.institutions.map(i=>shortName(i.name));
+  const counts = DB.institutions.map(i => countFn(DB.students.filter(s=>s.institutionId===i.id)));
+  return drillBarCfg(labels, counts, instColors());
+}
+
+/* Attempt-based metrics: unique students who attempted the survey (pre/post) or the quiz */
+function participationCounts(studentIds){
+  const inScope = id => !studentIds || studentIds.includes(id);
+  const preSet = new Set(DB.surveys.filter(s=>s.phase==='pre' && inScope(s.studentId)).map(s=>s.studentId));
+  const postSet = new Set(DB.surveys.filter(s=>s.phase==='post' && inScope(s.studentId)).map(s=>s.studentId));
+  const quizSet = new Set(DB.quizzes.filter(q=>inScope(q.studentId)).map(q=>q.studentId));
+  return { pre: preSet.size, post: postSet.size, quiz: quizSet.size };
+}
+function scoreDistribution(quizzes){
+  const bands = [0,0,0,0]; // 0–39%, 40–69%, 70–89%, 90–100%
+  quizzes.forEach(q=>{
+    if(q.pct>=90) bands[3]++;
+    else if(q.pct>=70) bands[2]++;
+    else if(q.pct>=40) bands[1]++;
+    else bands[0]++;
+  });
+  return bands;
+}
+function makeParticipationChart(canvasId, chartKey, registered, p, onBarClick){
+  const c = document.getElementById(canvasId);
+  if(!c) return;
+  App.charts[chartKey] = new Chart(c, {
+    type:'bar',
+    data:{
+      labels:['Registered','Pre-Survey Attempted','Post-Survey Attempted','Quiz Attempted'],
+      datasets:[{ label:'Students', data:[registered, p.pre, p.post, p.quiz],
+        backgroundColor:[C_NAVY, C_YELLOW, C_ORANGE, C_PASS], borderRadius:5 }]
+    },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+      scales:{ y:{ beginAtZero:true, ticks:{precision:0} } },
+      onClick:(e, els) => { if(onBarClick && els.length) onBarClick(els[0].index); },
+      onHover:(e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
+  });
+}
+const SCORE_BAND_COLORS = [C_FAIL, C_YELLOW, C_LGREEN, C_PASS];
+function makeScoreDistChart(canvasId, chartKey, quizzes, onBarClick){
+  const c = document.getElementById(canvasId);
+  if(!c) return;
+  App.charts[chartKey] = new Chart(c, {
+    type:'bar',
+    data:{
+      labels:['0–39%','40–69%','70–89% (Pass)','90–100% (Pass)'],
+      datasets:[{ label:'Quiz Attempts', data:scoreDistribution(quizzes),
+        backgroundColor:SCORE_BAND_COLORS, borderRadius:5 }]
+    },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+      scales:{ y:{ beginAtZero:true, ticks:{precision:0} } },
+      onClick:(e, els) => { if(onBarClick && els.length) onBarClick(els[0].index); },
+      onHover:(e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
+  });
+}
+
+function renderVenueCharts(instId) {
+  if(!window.Chart) return;
+  cleanChartRegistry();
+
+  const students = DB.students.filter(s=>s.institutionId===instId);
+  const studentIds = students.map(s=>s.id);
+  const quizzes = DB.quizzes.filter(q=>studentIds.includes(q.studentId));
+  const passCount = quizzes.filter(q=>q.passed).length;
+  const failCount = quizzes.filter(q=>!q.passed).length;
+
+  const c1 = document.getElementById('focalChartPassFail');
+  if(c1) {
+    App.charts.focalPassFail = new Chart(c1, {
+      type: 'doughnut',
+      data: {
+        labels: ['Passed (≥70%)', 'Not Passed'],
+        datasets: [{ data: [passCount, failCount], backgroundColor: [C_PASS, C_FAIL] }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } },
+        onClick: (e, els) => { if(els.length) App.drillPassFail(els[0].index, instId); },
+        onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
+    });
+  }
+
+  const avgAwareness = (phase) => {
+    const surveys = DB.surveys.filter(s=>studentIds.includes(s.studentId) && s.phase===phase);
+    if(surveys.length===0) return 0;
+    const awarenessIds = awarenessLikertIds(phase);
+    let sum=0, n=0;
+    surveys.forEach(s=>{ awarenessIds.forEach(id=>{ if(s.answers[id]!=null){ sum+=s.answers[id]; n++; } }); });
+    return n ? (sum/n) : 0;
+  };
+
+  const c2 = document.getElementById('focalChartPrePost');
+  if(c2) {
+    App.charts.focalPrePost = new Chart(c2, {
+      type: 'bar',
+      data: {
+        labels: ['Awareness Performance Tracker (Avg Score)'],
+        datasets: [
+          { label: 'Pre-Campaign Baseline', data: [avgAwareness('pre').toFixed(2)], backgroundColor: C_YELLOW, borderRadius: 5 },
+          { label: 'Post-Campaign Index', data: [avgAwareness('post').toFixed(2)], backgroundColor: C_PASS, borderRadius: 5 }
+        ]
+      },
+      options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, max: 5 } } }
+    });
+  }
+
+  // Charts based on students attempting the assessment survey / quiz (venue scope)
+  makeParticipationChart('focalChartParticipation', 'focalParticipation', students.length, participationCounts(studentIds), idx => App.drillParticipation(idx, instId));
+  makeScoreDistChart('focalChartScoreDist', 'focalScoreDist', quizzes, idx => App.drillScoreDist(idx, instId));
+}
+
+function renderGlobalCharts(){
+  if(!window.Chart) return;
+  cleanChartRegistry();
+
+  const instLabels = DB.institutions.map(i=>i.name.length>16? i.name.slice(0,15)+'…' : i.name);
+  const instCounts = DB.institutions.map(i=>DB.students.filter(s=>s.institutionId===i.id).length);
+  
+  const c1 = document.getElementById('chartByInst');
+  if(c1){
+    App.charts.byInst = new Chart(c1, {
+      type:'bar',
+      data:{labels:instLabels, datasets:[{label:'Students Registered', data:instCounts, backgroundColor:instColors(), borderRadius:5}]},
+      options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{ticks:{font:{size:9}}}, y:{beginAtZero:true, ticks:{precision:0}}},
+        onClick:(e, els) => { if(els.length) App.drillCampus(els[0].index); },
+        onHover:(e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; }}
+    });
+  }
+
+  const passCount = DB.quizzes.filter(q=>q.passed).length;
+  const failCount = DB.quizzes.filter(q=>!q.passed).length;
+  const c2 = document.getElementById('chartPassFail');
+  if(c2){
+    App.charts.passFail = new Chart(c2, {
+      type:'doughnut',
+      data:{labels:['Passed (≥70%)','Not Passed'], datasets:[{data:[passCount,failCount], backgroundColor:[C_PASS, C_FAIL]}]},
+      options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}},
+        onClick:(e, els) => { if(els.length) App.drillPassFail(els[0].index, null); },
+        onHover:(e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; }}
+    });
+  }
+  
+  const c3 = document.getElementById('chartPrePost');
+  if(c3){
+    const avgAwareness = (phase)=>{
+      const surveys = DB.surveys.filter(s=>s.phase===phase);
+      if(surveys.length===0) return 0;
+      const awarenessIds = awarenessLikertIds(phase);
+      let sum=0, n=0;
+      surveys.forEach(s=>{ awarenessIds.forEach(id=>{ if(s.answers[id]!=null){ sum+=s.answers[id]; n++; } }); });
+      return n? (sum/n) : 0;
+    };
+    App.charts.prePost = new Chart(c3, {
+      type:'bar',
+      data:{labels:['Awareness Domain Metric (1–5 Matrix Level)'], datasets:[
+        {label:'Pre-Campaign Baseline Data', data:[avgAwareness('pre').toFixed(2)], backgroundColor:C_YELLOW, borderRadius:5},
+        {label:'Post-Campaign Dynamic Index', data:[avgAwareness('post').toFixed(2)], backgroundColor:C_PASS, borderRadius:5}
+      ]},
+      options:{responsive:true, maintainAspectRatio:false, scales:{y:{beginAtZero:true, max:5}}}
+    });
+  }
+
+  // Charts based on students attempting the assessment survey / quiz (global scope)
+  makeParticipationChart('chartParticipation', 'participation', DB.students.length, participationCounts(null), idx => App.drillParticipation(idx, null));
+  makeScoreDistChart('chartScoreDist', 'scoreDist', DB.quizzes, idx => App.drillScoreDist(idx, null));
+}
+
+/* ============================================================
+   BOOT SYSTEM INITIALIZER
+   ============================================================ */
+bootSync();
+App.showLanding();
+</script>
+</body>
+</html>
