@@ -266,7 +266,7 @@ tr:hover td{background:#FBFDFA;}
   body{background:white;}
 }
 
-/* ---------- SheetDB sync status badge ---------- */
+/* ---------- Sync status badge ---------- */
 .sync-badge{
   position:fixed; bottom:16px; right:16px; z-index:300;
   background:var(--white); border:1px solid var(--line); box-shadow:var(--shadow);
@@ -360,16 +360,17 @@ function saveLocalData(db){ localStorage.setItem(STORE_KEY, JSON.stringify(db));
 let DB = loadLocalData();
 
 /* ============================================================
-   SHEETDB SYNC LAYER
+   APPS SCRIPT SYNC LAYER
    Mirrors DB to the real, already-designed Google Sheet (6 named sheets:
    surveys, quiz_results, focal_campuses, operational_gates, students,
-   app_config). Each sheet is written as one real row per record — no
-   JSON blobs, no delete-and-rebuild — so the workbook stays readable and
-   no stakeholder's data can be wiped by another device's save.
+   app_config) via the Apps Script web app deployed on that sheet. Each
+   sheet is written as one real row per record — no JSON blobs, no
+   delete-and-rebuild — so the workbook stays readable and no stakeholder's
+   data can be wiped by another device's save.
    No dashboard function/logic below this block is altered — this only
    changes what loadData()/saveData() do under the hood.
    ============================================================ */
-const SHEETDB_API = 'https://script.google.com/macros/s/AKfycbyjjA3qsQX5mA4U9s2YwqcQeV-kV7Mlo4ng12xXG-uXp1LGNb_7IvE0JcYnRvrjw4lI/exec';
+const APPS_SCRIPT_API = 'https://script.google.com/macros/s/AKfycbwXdj0JNokWWKJ4ibV5Y18yUPichmWrcnqmBu5yqSQ6ryfim8ixTVxCUtIMTBpXbPAsPQ/exec';
 
 const GATE_DEFS = [
   { id:'pre',  name:'Pre-Assessment Survey',  settingKey:'preOpen'  },
@@ -389,45 +390,46 @@ function loadSyncedIds(){
 function saveSyncedIds(){ localStorage.setItem(SYNCED_IDS_KEY, JSON.stringify(_syncedIds)); }
 let _syncedIds = loadSyncedIds();
 
-/* ---------- Low-level SheetDB REST helpers (each checks response status,
-   so a real failure is never mistaken for success). ---------- */
+/* ---------- Low-level Apps Script backend helpers ----------
+   Apps Script web apps only support GET and POST (no real PUT/DELETE),
+   so every write routes through one POST endpoint with an "action" field.
+   The POST body is sent as text/plain (not application/json) on purpose:
+   Apps Script can't answer a CORS preflight request, and application/json
+   triggers one; text/plain keeps it a "simple request" that skips preflight
+   entirely, while the script still parses the body as JSON on its side. */
 async function fetchSheet(sheet){
-  const res = await fetch(SHEETDB_API+'?sheet='+encodeURIComponent(sheet));
+  const res = await fetch(APPS_SCRIPT_API+'?sheet='+encodeURIComponent(sheet));
   if(!res.ok){
-    if(res.status===404) return [];
     const body = await res.text().catch(()=>'');
     throw new Error('Read failed for '+sheet+' ('+res.status+'): '+body.slice(0,200));
   }
   const data = await res.json();
+  if(data && data.error) throw new Error('Read failed for '+sheet+': '+data.error);
   return Array.isArray(data) ? data : [];
+}
+async function callAppsScript_(payload){
+  const res = await fetch(APPS_SCRIPT_API, {
+    method:'POST',
+    headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload)
+  });
+  if(!res.ok){
+    const body = await res.text().catch(()=>'');
+    throw new Error('Request failed ('+res.status+'): '+body.slice(0,200));
+  }
+  const data = await res.json();
+  if(data && data.error) throw new Error(data.error);
+  return data;
 }
 async function postRows(sheet, rows){
   if(!rows.length) return;
-  const res = await fetch(SHEETDB_API+'?sheet='+encodeURIComponent(sheet), {
-    method:'POST', headers:{ 'Content-Type':'application/json' },
-    body: JSON.stringify({ data: rows })
-  });
-  if(!res.ok){
-    const body = await res.text().catch(()=>'');
-    throw new Error('Write failed for '+sheet+' ('+res.status+'): '+body.slice(0,200));
-  }
+  await callAppsScript_({ action:'insert', sheet, rows });
 }
 async function putRow(sheet, keyColumn, keyValue, data){
-  const res = await fetch(SHEETDB_API+'/'+encodeURIComponent(keyColumn)+'/'+encodeURIComponent(keyValue)+'?sheet='+encodeURIComponent(sheet), {
-    method:'PUT', headers:{ 'Content-Type':'application/json' },
-    body: JSON.stringify({ data })
-  });
-  if(!res.ok){
-    const body = await res.text().catch(()=>'');
-    throw new Error('Update failed for '+sheet+' ('+res.status+'): '+body.slice(0,200));
-  }
+  await callAppsScript_({ action:'update', sheet, keyColumn, keyValue, data });
 }
 async function deleteRow(sheet, keyColumn, keyValue){
-  const res = await fetch(SHEETDB_API+'/'+encodeURIComponent(keyColumn)+'/'+encodeURIComponent(keyValue)+'?sheet='+encodeURIComponent(sheet), { method:'DELETE' });
-  if(!res.ok && res.status!==404){
-    const body = await res.text().catch(()=>'');
-    throw new Error('Delete failed for '+sheet+' ('+res.status+'): '+body.slice(0,200));
-  }
+  await callAppsScript_({ action:'delete', sheet, keyColumn, keyValue });
 }
 /* Fully reconciles a small, bounded sheet (institutions / gates / config):
    inserts rows that don't exist yet, updates ones that changed, and — only
@@ -525,7 +527,7 @@ function configRows(){
 }
 
 /* ---------- Pull: rebuild DB from the live sheet ---------- */
-async function pullFromSheetDB(){
+async function pullFromBackend(){
   const [studentRows, surveyRows, quizRows, campusRows, gateRows, configRowsRemote] = await Promise.all([
     fetchSheet('students'), fetchSheet('surveys'), fetchSheet('quiz_results'),
     fetchSheet('focal_campuses'), fetchSheet('operational_gates'), fetchSheet('app_config')
@@ -603,7 +605,7 @@ async function pullFromSheetDB(){
 let _syncTimer = null, _syncInFlight = false, _syncQueued = false, _lastSyncError = '';
 
 /* ---------- Push: send only what's new/changed to the live sheet ---------- */
-async function pushToSheetDB(){
+async function pushToBackend(){
   if(_syncInFlight){ _syncQueued = true; return; }
   _syncInFlight = true;
   updateSyncBadge('syncing');
@@ -627,22 +629,22 @@ async function pushToSheetDB(){
     updateSyncBadge('synced');
   }catch(err){
     _lastSyncError = err.message || String(err);
-    console.error('SheetDB sync failed:', err);
+    console.error('Backend sync failed:', err);
     updateSyncBadge('error');
   }finally{
     _syncInFlight = false;
-    if(_syncQueued){ _syncQueued = false; pushToSheetDB(); }
+    if(_syncQueued){ _syncQueued = false; pushToBackend(); }
   }
 }
 
 /* saveData() keeps its original name/signature so every existing call site
    (13 of them) works unchanged. It now saves locally AND queues a debounced
-   push to SheetDB, so rapid successive saves become a single network sync. */
+   push to the shared sheet, so rapid successive saves become a single network sync. */
 function saveData(){
   saveLocalData(DB);
   updateSyncBadge('pending');
   if(_syncTimer) clearTimeout(_syncTimer);
-  _syncTimer = setTimeout(()=>{ _syncTimer = null; pushToSheetDB(); }, 1200);
+  _syncTimer = setTimeout(()=>{ _syncTimer = null; pushToBackend(); }, 1200);
 }
 
 function updateSyncBadge(state){
@@ -664,7 +666,7 @@ function updateSyncBadge(state){
 async function manualSync(){
   updateSyncBadge('syncing');
   try{
-    const remote = await pullFromSheetDB();
+    const remote = await pullFromBackend();
     if(remote){ DB = remote; saveLocalData(DB); }
     updateSyncBadge('synced');
     alert('Data refreshed from the shared sheet. Switch role (or reload the page) to see the latest records reflected in the view.');
@@ -678,17 +680,17 @@ async function manualSync(){
 
 async function bootSync(){
   try{
-    const remote = await pullFromSheetDB();
+    const remote = await pullFromBackend();
     if(remote){
       DB = remote;
       saveLocalData(DB);
       updateSyncBadge('synced');
     } else {
-      await pushToSheetDB(); // sheet is empty (first-ever run) — seed it with current local data
+      await pushToBackend(); // sheet is empty (first-ever run) — seed it with current local data
     }
   }catch(err){
     _lastSyncError = err.message || String(err);
-    console.error('Initial SheetDB sync failed, using data saved on this device:', err);
+    console.error('Initial backend sync failed, using data saved on this device:', err);
     updateSyncBadge('offline');
   }
 }
@@ -702,10 +704,10 @@ async function bootSync(){
 setInterval(async () => {
   if(_syncInFlight || _syncTimer) return;
   try{
-    const remote = await pullFromSheetDB();
+    const remote = await pullFromBackend();
     if(remote){ DB = remote; saveLocalData(DB); updateSyncBadge('synced'); }
   }catch(err){
-    console.error('Background SheetDB refresh failed:', err);
+    console.error('Background backend refresh failed:', err);
   }
 }, 40000);
 
