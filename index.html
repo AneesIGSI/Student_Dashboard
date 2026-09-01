@@ -655,6 +655,7 @@ async function pullFromBackend(){
 }
 
 let _syncTimer = null, _syncInFlight = false, _syncQueued = false, _lastSyncError = '';
+let _institutionsDirty = false; // true only when THIS session actually added/edited/deleted/renamed an institution
 
 /* ---------- Push: send only what's new/changed to the live sheet ---------- */
 async function pushToBackend(){
@@ -671,9 +672,18 @@ async function pushToBackend(){
     const newQuizzes = DB.quizzes.filter(q=>!_syncedIds.quizzes.includes(q.id));
     if(newQuizzes.length){ await postRows('quiz_results', newQuizzes.map(quizToRow)); _syncedIds.quizzes.push(...newQuizzes.map(q=>q.id)); }
 
-    saveSyncedIds();
+        saveSyncedIds();
 
-    await reconcileSheet('focal_campuses', 'school_name', DB.institutions.map(institutionToRow), { allowDelete:true });
+    /* Institutions are only reconciled (and only allowed to delete rows)
+       when THIS session actually changed an institution. Every other
+       device's routine saveData()/pushToBackend() cycle — triggered by
+       something unrelated like a student submitting a survey — must NOT
+       touch focal_campuses, otherwise a stale local institution list on
+       an unrelated device silently deletes/reverts renames made elsewhere. */
+    if(_institutionsDirty){
+      await reconcileSheet('focal_campuses', 'school_name', DB.institutions.map(institutionToRow), { allowDelete:true });
+      _institutionsDirty = false;
+    }
     await reconcileSheet('operational_gates', 'phase_id', GATE_DEFS.map(gateToRow), { allowDelete:false });
     await reconcileSheet('app_config', 'key', configRows(), { allowDelete:false });
 
@@ -1960,12 +1970,13 @@ const App = {
     } else {
       DB.institutions.push({id:uid('inst'), name, type, key:null});
     }
+    _institutionsDirty = true;
     saveData();
     this.showIgsiDashboard('institutions');
   },
   instEdit(id){ this.instEditId = id; this.showIgsiDashboard('institutions'); },
   instCancelEdit(){ this.instEditId = null; this.showIgsiDashboard('institutions'); },
-  deleteInstitution(id){
+   deleteInstitution(id){
     const regCount = DB.students.filter(s=>s.institutionId===id).length;
     if(regCount > 0){
       alert(`Cannot delete this institution: ${regCount} student(s) are registered under it. Their records would be orphaned.`);
@@ -1974,6 +1985,7 @@ const App = {
     if(!confirm('Delete this institution from the campaign list? This cannot be undone.')) return;
     DB.institutions = DB.institutions.filter(i=>i.id!==id);
     if(this.instEditId===id) this.instEditId = null;
+    _institutionsDirty = true;
     saveData();
     this.showIgsiDashboard('institutions');
   },
@@ -1990,6 +2002,7 @@ const App = {
   regenKey(instId){
     const inst = DB.institutions.find(i=>i.id===instId);
     inst.key = genKey();
+    _institutionsDirty = true;
     saveData();
     this.showIgsiDashboard('institutions');
   },
