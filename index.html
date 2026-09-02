@@ -505,10 +505,6 @@ function studentToRow(s){
     student_name: fullStudentName(s),
     school_name: instNameById(s.institutionId),
     institution_id: s.institutionId,
-    gender: s.gender || '',
-    level: s.level || '',
-    class_name: s.className || '',
-    section_name: s.sectionName || '',
     registered_at: s.createdAt
   };
 }
@@ -602,8 +598,7 @@ async function pullFromBackend(){
       id: row.student_key,
       firstName: parts[0]||'', middleName: parts.length>2?parts.slice(1,-1).join(' '):'',
       lastName: parts.length>1?parts[parts.length-1]:'',
-      gender: row.gender || '', institutionId, level: row.level || '',
-      className: row.class_name || '', sectionName: row.section_name || '',
+      gender:'', institutionId, level:'', className:'', sectionName:'',
       createdAt: row.registered_at || new Date().toISOString()
     };
   });
