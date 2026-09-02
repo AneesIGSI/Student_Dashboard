@@ -656,6 +656,7 @@ async function pullFromBackend(){
 
 let _syncTimer = null, _syncInFlight = false, _syncQueued = false, _lastSyncError = '';
 let _institutionsDirty = false; // true only when THIS session actually added/edited/deleted/renamed an institution
+let _gatesDirty = false; // true only when THIS session actually toggled a phase gate/setting
 
 /* ---------- Push: send only what's new/changed to the live sheet ---------- */
 async function pushToBackend(){
@@ -684,7 +685,14 @@ async function pushToBackend(){
       await reconcileSheet('focal_campuses', 'school_name', DB.institutions.map(institutionToRow), { allowDelete:true });
       _institutionsDirty = false;
     }
-    await reconcileSheet('operational_gates', 'phase_id', GATE_DEFS.map(gateToRow), { allowDelete:false });
+    /* Same reasoning as institutions: only push gate/settings state when
+       THIS session actually toggled a phase, otherwise a device with a
+       stale open/closed value overwrites a correct toggle made elsewhere
+       the next time it saves anything unrelated. */
+    if(_gatesDirty){
+      await reconcileSheet('operational_gates', 'phase_id', GATE_DEFS.map(gateToRow), { allowDelete:false });
+      _gatesDirty = false;
+    }
     await reconcileSheet('app_config', 'key', configRows(), { allowDelete:false });
 
     _lastSyncError = '';
@@ -1991,11 +1999,13 @@ const App = {
   },
   toggleSetting(key){
     DB.settings[key] = !DB.settings[key];
+    _gatesDirty = true;
     saveData();
     this.showIgsiDashboard('settings');
   },
   setSetting(key, val){
     DB.settings[key] = !!val;
+    _gatesDirty = true;
     saveData();
     this.showIgsiDashboard('settings');
   },
