@@ -334,22 +334,63 @@ const LOGO_IGSI  = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAEsCAMAAA
 const STORE_KEY = 'hhp_v2';
 
 const DEFAULT_INSTITUTIONS = [
-  {name:'Islamabad Model College for Girls, F-6/2', type:'school'},
-  {name:'Islamabad Model College for Boys, I-8/4', type:'school'},
-  {name:'Islamabad College for Girls, F-7/2', type:'school'},
-  {name:'Islamabad College for Boys, F-7/3', type:'school'},
-  {name:'Federal Government Boys Secondary School, G-6/3', type:'school'},
-  {name:'Federal Government Girls Secondary School, F-8/1', type:'school'},
-  {name:'The City School, Islamabad Campus', type:'school'},
-  {name:'Beaconhouse School System, Margalla Campus', type:'school'},
-  {name:'Roots International School, Islamabad', type:'school'},
-  {name:'Quaid-i-Azam University', type:'university'},
-  {name:'National University of Sciences and Technology (NUST)', type:'university'},
   {name:'International Islamic University, Islamabad (IIUI)', type:'university'},
-  {name:'COMSATS University Islamabad', type:'university'},
-  {name:'Air University, Islamabad', type:'university'},
-  {name:'Bahria University, Islamabad', type:'university'}
-].map((it,i)=>({ id:'inst_'+(i+1), name: it.name, type: it.type, key: 'HHP-'+(i+100) }));
+  {name:'National University of Modern Languages (NUML)', type:'university'},
+  {name:'National Skills University (NSU)', type:'university'},
+  {name:'National University of Technology (NUTECH)', type:'university'},
+  {name:'Ripha International University', type:'university'},
+  {name:'National Excellence Institute', type:'university'},
+  {name:'Islamabad College for Boys (ICB) G-6.3', type:'school'},
+  {name:'Islamabad Model College for Boys (IMCB) F-7/3', type:'school'},
+  {name:'Islamabad Model College for Girls Korang Town', type:'school'},
+  {name:'Islamabad Model School for Bours (IMSB), Bara Kahu', type:'school'},
+  {name:'Islamabad Model School for Bours (IMSB), Tumair', type:'school'},
+  {name:'Islamabad Model School for Bours (IMSB), Gagri', type:'school'},
+  {name:'Islamabad Model School for Girls (IMSG), G-10/3', type:'school'},
+  {name:'Islamabad Model School for Girls (IMSG), D-17 Tarnol', type:'school'},
+  {name:'Islamabad Model School for Girls (IMSG), Nara Syedan', type:'school'},
+  {name:'Islamabad Model School for Girls (IMSG), Phulgran', type:'school'},
+  {name:'Islamabad Model School for Girls (IMSG), Sohan', type:'school'},
+  {name:'Islamabad Model School for Girls (IMSG), Nougazi', type:'school'},
+  {name:'Islamabad Model School for Girls (IMSG), Humak', type:'school'},
+  {name:'Islamabad Model School for Girls (IMSG), Korang Town', type:'school'},
+  {name:'Islamabad Model School for Boys (IMSB), Khanna Nai Abadi', type:'school'},
+  {name:'Islamabad Model School for Boys (IMSB) I-8/1', type:'school'}
+].map((it,i)=>({ id:'inst_'+(i+1), name: it.name, type: it.type, key: 'HHP-'+(i+100), abbr:'', archived:false }));
+
+/* The 2026 roster IGSI supplied, spelled EXACTLY as it already appears in the
+   live focal_campuses sheet (including the "Bours" typo on 3 entries, kept
+   verbatim rather than silently corrected — fixing it here would break
+   name-matching against students already registered under that spelling).
+   Used by App.loadCampusRoster() to migrate a live campaign in one click:
+   archives anything not on this list, adds anything on this list that isn't
+   present yet. Kept separate from DEFAULT_INSTITUTIONS (which only seeds a
+   brand-new, never-synced install) because a live campaign already has its
+   own DB.institutions pulled from the sheet. */
+const CAMPUS_ROSTER_2026 = [
+  {name:'International Islamic University, Islamabad (IIUI)', type:'university'},
+  {name:'National University of Modern Languages (NUML)', type:'university'},
+  {name:'National Skills University (NSU)', type:'university'},
+  {name:'National University of Technology (NUTECH)', type:'university'},
+  {name:'Ripha International University', type:'university'},
+  {name:'National Excellence Institute', type:'university'},
+  {name:'Islamabad College for Boys (ICB) G-6.3', type:'school'},
+  {name:'Islamabad Model College for Boys (IMCB) F-7/3', type:'school'},
+  {name:'Islamabad Model College for Girls Korang Town', type:'school'},
+  {name:'Islamabad Model School for Bours (IMSB), Bara Kahu', type:'school'},
+  {name:'Islamabad Model School for Bours (IMSB), Tumair', type:'school'},
+  {name:'Islamabad Model School for Bours (IMSB), Gagri', type:'school'},
+  {name:'Islamabad Model School for Girls (IMSG), G-10/3', type:'school'},
+  {name:'Islamabad Model School for Girls (IMSG), D-17 Tarnol', type:'school'},
+  {name:'Islamabad Model School for Girls (IMSG), Nara Syedan', type:'school'},
+  {name:'Islamabad Model School for Girls (IMSG), Phulgran', type:'school'},
+  {name:'Islamabad Model School for Girls (IMSG), Sohan', type:'school'},
+  {name:'Islamabad Model School for Girls (IMSG), Nougazi', type:'school'},
+  {name:'Islamabad Model School for Girls (IMSG), Humak', type:'school'},
+  {name:'Islamabad Model School for Girls (IMSG), Korang Town', type:'school'},
+  {name:'Islamabad Model School for Boys (IMSB), Khanna Nai Abadi', type:'school'},
+  {name:'Islamabad Model School for Boys (IMSB) I-8/1', type:'school'}
+];
 
 function defaultData(){
   return {
@@ -549,6 +590,8 @@ function institutionToRow(inst){
   return {
     focal_key: inst.key || '',
     school_name: inst.name,
+    abbreviation: inst.abbr || '',
+    archived: !!inst.archived,
     total_enrolled: DB.students.filter(s=>s.institutionId===inst.id).length
     // coordinator_name / contact_email / target_achieved are intentionally
     // never sent — those stay whatever a stakeholder fills in by hand.
@@ -582,9 +625,15 @@ async function pullFromBackend(){
   const priorInstByName = new Map(DB.institutions.map(i=>[i.name, i]));
 
   let institutions = campusRows.map(row=>{
+    const truthy = v => v===true || v==='true' || v===1 || v==='1';
     const prior = priorInstByName.get(row.school_name);
-    if(prior) return { ...prior, key: row.focal_key || prior.key };
-    return { id: uid('inst'), name: row.school_name, type: 'school', key: row.focal_key || null };
+    if(prior) return {
+      ...prior,
+      key: row.focal_key || prior.key,
+      abbr: row.abbreviation || prior.abbr || '',
+      archived: row.archived!==undefined && row.archived!=='' ? truthy(row.archived) : !!prior.archived
+    };
+    return { id: uid('inst'), name: row.school_name, type: 'school', key: row.focal_key || null, abbr: row.abbreviation || '', archived: truthy(row.archived) };
   });
   if(!institutions.length) institutions = DB.institutions;
   const instIdByName = new Map(institutions.map(i=>[i.name, i.id]));
@@ -1014,6 +1063,12 @@ const GENDERS = ['Female','Male','Other'];
 const GENDER_COLORS = [C_PINK, C_BLUE, C_YELLOW];
 function instColors(){ return DB.institutions.map((_,i)=>SDG_COLORS[i%SDG_COLORS.length]); }
 function shortName(n){ return n.length>16 ? n.slice(0,15)+'…' : n; }
+/* Chart/graph label for an institution: its IGSI-set abbreviation if one
+   exists, otherwise the full name (no truncation) — applies everywhere a
+   chart or graph shows a campus, across IGSI, Taskforce, and the PDF report. */
+function institutionLabel(inst){
+  return (inst && inst.abbr && inst.abbr.trim()) ? inst.abbr.trim() : (inst ? inst.name : '');
+}
 
 /* ============================================================
    ROUTING STATE MACHINE INTERNALS
@@ -1082,7 +1137,9 @@ const App = {
   showStudentRegister(editMode){
     this.setRoleIndicator('Student Enrollment');
     let existing = editMode ? this.currentStudent() : this.state.registerDraft;
-    const instOpts = DB.institutions.map(i=>`<option value="${i.id}" ${existing&&existing.institutionId===i.id?'selected':''}>${escapeHtml(i.name)}</option>`).join('');
+    const instOpts = DB.institutions
+      .filter(i => !i.archived || (existing && existing.institutionId===i.id))
+      .map(i=>`<option value="${i.id}" ${existing&&existing.institutionId===i.id?'selected':''}>${escapeHtml(i.name)}</option>`).join('');
     
     this.el(`
       <div class="back-link no-print" onclick="${editMode?'App.showStudentHome()':'App.backToLanding()'}">&larr; Back</div>
@@ -1627,6 +1684,18 @@ const App = {
       [SCORE_BAND_COLORS[idx], C_REST]));
   },
 
+  drillInstituteProfile(idx){
+    const inst = DB.institutions[idx];
+    if(!inst) return;
+    const students = DB.students.filter(s=>s.institutionId===inst.id);
+    const gCounts = GENDERS.map(g=>students.filter(s=>s.gender===g).length);
+    const cls = classBreakdown(students);
+    openDrill(inst.name, `${students.length} registered student(s)`,
+      'Gender Proportion', 'Students by Class');
+    drillChart('drillLeft', 'dl', drillDoughnutCfg(GENDERS, gCounts, GENDER_COLORS));
+    drillChart('drillRight', 'dr', drillBarCfg(cls.labels, cls.counts, cls.labels.map((_,i)=>SDG_COLORS[i%SDG_COLORS.length])));
+  },
+
   /* ---------------- INSTITUTION FOCAL DESK ---------------- */
   showFocalLogin(){
     this.setRoleIndicator(null);
@@ -1738,6 +1807,7 @@ const App = {
   showTaskforceDashboard(){
     this.setRoleIndicator('SDG Taskforce Central Hub');
     const g = globalStats();
+    const qs = quizStatsGlobal();
     this.el(`
       <div class="flex-between">
         <div><span class="eyebrow">Taskforce Executive System</span><h2>Campaign Topline Indicators</h2></div>
@@ -1749,19 +1819,22 @@ const App = {
         ${statTile(g.quizAttempts,'Evaluations Logged')}
         ${statTile(g.passRate+'%','Global Certification Yield', true)}
       </div>
-      
-      <!-- Integrated Visual Reporting Systems -->
-      <div class="grid grid-2">
-        <div class="card"><h3>Registrations by Campus Location</h3><div class="chart-box"><canvas id="chartByInst"></canvas></div></div>
-        <div class="card"><h3>Quiz Pass vs Fail</h3><div class="chart-box"><canvas id="chartPassFail"></canvas></div></div>
+
+      <h3 style="margin-top:28px;">Section 1 &middot; Pre &amp; Post Assessment Progress</h3>
+      <p class="muted" style="margin-top:-6px;">Registered students per campus, alongside how many have completed the pre-assessment (and, going forward, the post-assessment). Click a campus's bars to see its gender proportion and class breakdown.</p>
+      <div class="card"><h4 style="font-size:14px;">Progress Over Time (Cumulative)</h4><div class="chart-box" style="height:260px;"><canvas id="chartAssessmentTimeline"></canvas></div></div>
+      <div class="card"><div class="chart-box" style="height:340px;"><canvas id="chartAssessmentProgress"></canvas></div></div>
+
+      <h3 style="margin-top:28px;">Section 2 &middot; Quiz</h3>
+      <p class="muted" style="margin-top:-6px;">Campaign-wide quiz reach and gender split, plus a per-campus breakdown. Click a campus's bar to see its pass/fail split and gender proportion.</p>
+      <div class="grid grid-3">
+        ${statTile(qs.institutesWithQuiz+' / '+qs.totalInstitutes,'Campuses With Quiz Activity')}
+        ${statTile(g.quizAttempts,'Total Quiz Attempts')}
+        ${statTile(g.passRate+'%','Global Pass Rate', true)}
       </div>
-      <div class="card">
-        <h3>Pre vs Post Campaign Shift (Section 1 Knowledge Score)</h3>
-        <div class="chart-box"><canvas id="chartPrePost"></canvas></div>
-      </div>
       <div class="grid grid-2">
-        <div class="card"><h3>Assessment &amp; Quiz Participation</h3><div class="chart-box"><canvas id="chartParticipation"></canvas></div></div>
-        <div class="card"><h3>Quiz Score Distribution</h3><div class="chart-box"><canvas id="chartScoreDist"></canvas></div></div>
+        <div class="card"><h4 style="font-size:14px;">Quiz Attempts by Campus</h4><div class="chart-box"><canvas id="chartQuizByInst"></canvas></div></div>
+        <div class="card"><h4 style="font-size:14px;">Overall Gender Proportion (Quiz Takers)</h4><div class="chart-box"><canvas id="chartQuizGender"></canvas></div></div>
       </div>
 
       <div class="card">
@@ -1772,9 +1845,8 @@ const App = {
         </div>
       </div>
     `);
-    
-    // Explicit dynamic thread handling resolving Screenshot 2026-07-05 at 7.58.08 PM.jpg render bugs
-    setTimeout(() => ensureChartJs(renderGlobalCharts), 50);
+
+    setTimeout(() => ensureChartJs(renderAssessmentQuizSections), 50);
   },
 
   /* ---------------- IGSI MANAGEMENT FRAMEWORK ---------------- */
@@ -1822,6 +1894,7 @@ const App = {
 
     const content = document.getElementById('igsiTabContent');
     if(this.igsiTab==='overview'){
+      const qs = quizStatsGlobal();
       content.innerHTML = `
         <div class="grid grid-4">
           ${statTile(g.students,'Students Registered')}
@@ -1829,24 +1902,43 @@ const App = {
           ${statTile(g.quizAttempts,'Evaluations Logged')}
           ${statTile(g.passRate+'%','Global Certification Yield', true)}
         </div>
-        <div class="grid grid-2" style="margin-top:20px;">
-          <div class="card"><h3>Registrations by Campus Location</h3><div class="chart-box"><canvas id="chartByInst"></canvas></div></div>
-          <div class="card"><h3>Quiz Pass vs Fail</h3><div class="chart-box"><canvas id="chartPassFail"></canvas></div></div>
+
+        <h3 style="margin-top:28px;">Section 1 &middot; Pre &amp; Post Assessment Progress</h3>
+        <p class="muted" style="margin-top:-6px;">Registered students per campus, alongside how many have completed the pre-assessment (and, going forward, the post-assessment). Click a campus's bars to see its gender proportion and class breakdown.</p>
+        <div class="card"><h4 style="font-size:14px;">Progress Over Time (Cumulative)</h4><div class="chart-box" style="height:260px;"><canvas id="chartAssessmentTimeline"></canvas></div></div>
+        <div class="card"><div class="chart-box" style="height:340px;"><canvas id="chartAssessmentProgress"></canvas></div></div>
+
+        <h3 style="margin-top:28px;">Section 2 &middot; Quiz</h3>
+        <p class="muted" style="margin-top:-6px;">Campaign-wide quiz reach and gender split, plus a per-campus breakdown. Click a campus's bar to see its pass/fail split and gender proportion.</p>
+        <div class="grid grid-3">
+          ${statTile(qs.institutesWithQuiz+' / '+qs.totalInstitutes,'Campuses With Quiz Activity')}
+          ${statTile(g.quizAttempts,'Total Quiz Attempts')}
+          ${statTile(g.passRate+'%','Global Pass Rate', true)}
         </div>
         <div class="grid grid-2">
-          <div class="card"><h3>Assessment &amp; Quiz Participation</h3><div class="chart-box"><canvas id="chartParticipation"></canvas></div></div>
-          <div class="card"><h3>Quiz Score Distribution</h3><div class="chart-box"><canvas id="chartScoreDist"></canvas></div></div>
+          <div class="card"><h4 style="font-size:14px;">Quiz Attempts by Campus</h4><div class="chart-box"><canvas id="chartQuizByInst"></canvas></div></div>
+          <div class="card"><h4 style="font-size:14px;">Overall Gender Proportion (Quiz Takers)</h4><div class="chart-box"><canvas id="chartQuizGender"></canvas></div></div>
         </div>`;
-      setTimeout(() => ensureChartJs(renderGlobalCharts), 50);
+      setTimeout(() => ensureChartJs(renderAssessmentQuizSections), 50);
     } else if(this.igsiTab==='institutions'){
       const editingInst = this.instEditId ? DB.institutions.find(i=>i.id===this.instEditId) : null;
       content.innerHTML = `
         <div class="card">
+          <div class="flex-between" style="align-items:flex-start;">
+            <div>
+              <h3>2026 Campus Roster</h3>
+              <p class="muted" style="font-size:13px;margin-bottom:0;">One-click migration: archives any current campus not on the 2026 list (hidden from new registration, history kept), adds any 2026 campus not already here.</p>
+            </div>
+            <button class="btn btn-gold" style="white-space:nowrap;" onclick="App.loadCampusRoster()">Load 2026 Roster</button>
+          </div>
+        </div>
+        <div class="card">
           <h3>${editingInst ? 'Edit Campus Asset' : 'Register Campus Assets'}</h3>
           ${editingInst ? `<p class="muted" style="font-size:13px;">Editing: <b>${escapeHtml(editingInst.name)}</b></p>` : ''}
-          <div class="grid grid-3">
+          <div class="grid grid-4">
             <div><label>Campus Venue Name</label><input type="text" id="newInstName" placeholder="e.g. Quaid-i-Azam University" value="${editingInst?escapeHtml(editingInst.name):''}"></div>
             <div><label>Operational Domain</label><select id="newInstType"><option value="school" ${editingInst&&editingInst.type==='school'?'selected':''}>School / College Format</option><option value="university" ${editingInst&&editingInst.type==='university'?'selected':''}>Higher Academic Format</option></select></div>
+            <div><label>Abbreviation <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0;">(optional — used in charts)</span></label><input type="text" id="newInstAbbr" placeholder="e.g. IIUI" value="${editingInst?escapeHtml(editingInst.abbr||''):''}"></div>
             <div style="display:flex;align-items:flex-end;gap:8px;">
               <button class="btn btn-gold btn-block" onclick="App.addInstitution()">${editingInst?'Save Changes':'Inject Venue Asset'}</button>
               ${editingInst?`<button class="btn btn-outline" onclick="App.instCancelEdit()">Cancel</button>`:''}
@@ -1856,17 +1948,20 @@ const App = {
         <div class="card">
           <div class="flex-between"><h3>Focal Access Keys Registry</h3><span class="muted">${DB.institutions.length} Asset Entities</span></div>
           <div class="table-wrap">
-            <table><thead><tr><th>Campus Context String</th><th>Track Type</th><th>Key Token Pair</th><th>System Actions</th></tr></thead>
+            <table><thead><tr><th>Campus Context String</th><th>Abbr.</th><th>Track Type</th><th>Key Token Pair</th><th>Status</th><th>System Actions</th></tr></thead>
             <tbody>${DB.institutions.map(i=>{
               const regCount = DB.students.filter(s=>s.institutionId===i.id).length;
               return `
-              <tr>
+              <tr${i.archived?' style="opacity:.55;"':''}>
                 <td><b>${escapeHtml(i.name)}</b>${regCount?`<div class="muted" style="font-size:11.5px;">${regCount} student(s) registered</div>`:''}</td>
+                <td>${i.abbr?escapeHtml(i.abbr):'<span class="muted">—</span>'}</td>
                 <td>${i.type.toUpperCase()}</td>
                 <td>${i.key?`<span class="tag-key">${i.key}</span>`:'<span class="muted">Key missing</span>'}</td>
+                <td>${i.archived?'<span class="badge badge-fail">Archived</span>':'<span class="badge badge-pass">Active</span>'}</td>
                 <td style="white-space:nowrap;">
                   <button class="btn btn-outline" style="padding:6px 12px;font-size:12.5px;" onclick="App.regenKey('${i.id}')">${i.key?'Regenerate Block':'Initialize Token'}</button>
                   <button class="btn btn-outline" style="padding:6px 12px;font-size:12.5px;" onclick="App.instEdit('${i.id}')">Edit</button>
+                  <button class="btn btn-outline" style="padding:6px 12px;font-size:12.5px;" onclick="App.instToggleArchive('${i.id}')">${i.archived?'Unarchive':'Archive'}</button>
                   <button class="btn btn-danger" style="padding:6px 12px;font-size:12.5px;" onclick="App.deleteInstitution('${i.id}')">Delete</button>
                 </td>
               </tr>`;}).join('')}</tbody></table>
@@ -1970,13 +2065,14 @@ const App = {
   addInstitution(){
     const name = document.getElementById('newInstName').value.trim();
     const type = document.getElementById('newInstType').value;
+    const abbr = document.getElementById('newInstAbbr').value.trim();
     if(!name) return;
     if(this.instEditId){
       const inst = DB.institutions.find(i=>i.id===this.instEditId);
-      if(inst){ inst.name = name; inst.type = type; }
+      if(inst){ inst.name = name; inst.type = type; inst.abbr = abbr; }
       this.instEditId = null;
     } else {
-      DB.institutions.push({id:uid('inst'), name, type, key:null});
+      DB.institutions.push({id:uid('inst'), name, type, key:null, abbr, archived:false});
     }
     _institutionsDirty = true;
     saveData();
@@ -1984,6 +2080,28 @@ const App = {
   },
   instEdit(id){ this.instEditId = id; this.showIgsiDashboard('institutions'); },
   instCancelEdit(){ this.instEditId = null; this.showIgsiDashboard('institutions'); },
+  instToggleArchive(id){
+    const inst = DB.institutions.find(i=>i.id===id);
+    if(!inst) return;
+    inst.archived = !inst.archived;
+    _institutionsDirty = true;
+    saveData();
+    this.showIgsiDashboard('institutions');
+  },
+  loadCampusRoster(){
+    if(!confirm('This will archive every current campus not on the 2026 roster (hiding it from new student registration, but keeping its historical data), and add any 2026 campus not already present. Continue?')) return;
+    const existingNames = new Set(DB.institutions.map(i=>i.name));
+    CAMPUS_ROSTER_2026.forEach(entry=>{
+      if(!existingNames.has(entry.name)){
+        DB.institutions.push({id:uid('inst'), name:entry.name, type:entry.type, key:null, abbr:'', archived:false});
+      }
+    });
+    const rosterNames = new Set(CAMPUS_ROSTER_2026.map(e=>e.name));
+    DB.institutions.forEach(inst=>{ inst.archived = !rosterNames.has(inst.name); });
+    _institutionsDirty = true;
+    saveData();
+    this.showIgsiDashboard('institutions');
+  },
    deleteInstitution(id){
     const regCount = DB.students.filter(s=>s.institutionId===id).length;
     if(regCount > 0){
@@ -2331,6 +2449,50 @@ function globalStats(){
     passRate: pct(passed, quizzes.length)
   };
 }
+/* ---------- Section 1 (Pre/Post progress) + Section 2 (Quiz) dashboard data ---------- */
+function assessmentProgressByInstitution(){
+  return DB.institutions.map(i=>{
+    const students = DB.students.filter(s=>s.institutionId===i.id);
+    const ids = students.map(s=>s.id);
+    const pre = new Set(DB.surveys.filter(s=>s.phase==='pre' && ids.includes(s.studentId)).map(s=>s.studentId)).size;
+    const post = new Set(DB.surveys.filter(s=>s.phase==='post' && ids.includes(s.studentId)).map(s=>s.studentId)).size;
+    return { id:i.id, name:i.name, abbr:i.abbr, registered: students.length, pre, post };
+  });
+}
+function classBreakdown(students){
+  const map = new Map();
+  students.forEach(s=>{
+    const key = (s.className && s.className.trim()) ? s.className.trim() : 'Unspecified';
+    map.set(key, (map.get(key)||0)+1);
+  });
+  return { labels:[...map.keys()], counts:[...map.values()] };
+}
+function quizGenderProportion(){
+  const takerIds = new Set(DB.quizzes.map(q=>q.studentId));
+  const takers = DB.students.filter(s=>takerIds.has(s.id));
+  return GENDERS.map(g=>takers.filter(s=>s.gender===g).length);
+}
+function quizStatsGlobal(){
+  const institutesWithQuiz = new Set(DB.quizzes.map(q=>q.institutionId)).size;
+  return { institutesWithQuiz, totalInstitutes: DB.institutions.length };
+}
+/* Cumulative-over-time data for Section 1's timeline chart: how many
+   students had registered / completed pre / completed post, as of each
+   calendar day that saw any activity. */
+function dateOnly(iso){ return (iso||'').slice(0,10); }
+function assessmentTimelineData(){
+  const regDates  = DB.students.map(s=>dateOnly(s.createdAt)).filter(Boolean);
+  const preDates  = DB.surveys.filter(s=>s.phase==='pre').map(s=>dateOnly(s.submittedAt)).filter(Boolean);
+  const postDates = DB.surveys.filter(s=>s.phase==='post').map(s=>dateOnly(s.submittedAt)).filter(Boolean);
+  const allDates = [...new Set([...regDates, ...preDates, ...postDates])].sort();
+  const countUpTo = (dates, day) => dates.filter(d=>d<=day).length;
+  return {
+    labels: allDates,
+    registered: allDates.map(d=>countUpTo(regDates, d)),
+    pre: allDates.map(d=>countUpTo(preDates, d)),
+    post: allDates.map(d=>countUpTo(postDates, d))
+  };
+}
 
 /* ============================================================
    GRAPHICAL RUNTIME INSTANTIATION PARSER
@@ -2552,7 +2714,7 @@ async function buildAnalysisReportPdf(){
   // 4. Campus contribution
   H('4. Campus Contribution');
   const imgCampus = await offscreenChartImage(drillBarCfg(
-    DB.institutions.map(i=>shortName(i.name)),
+    DB.institutions.map(i=>institutionLabel(i)),
     DB.institutions.map(i=>DB.students.filter(s=>s.institutionId===i.id).length),
     instColors()), 900, 420);
   pageBreak(86);
@@ -2585,7 +2747,7 @@ function drillContribution(instId, countFn){
     const counts = GENDERS.map(g => countFn(students.filter(s=>s.gender===g)));
     return drillBarCfg(GENDERS, counts, GENDER_COLORS);
   }
-  const labels = DB.institutions.map(i=>shortName(i.name));
+  const labels = DB.institutions.map(i=>institutionLabel(i));
   const counts = DB.institutions.map(i => countFn(DB.students.filter(s=>s.institutionId===i.id)));
   return drillBarCfg(labels, counts, instColors());
 }
@@ -2689,53 +2851,74 @@ function renderVenueCharts(instId) {
   makeScoreDistChart('focalChartScoreDist', 'focalScoreDist', quizzes, idx => App.drillScoreDist(idx, instId));
 }
 
-function renderGlobalCharts(){
+function makeAssessmentTimelineChart(canvasId, chartKey){
+  const c = document.getElementById(canvasId);
+  if(!c) return;
+  const d = assessmentTimelineData();
+  if(!d.labels.length) return;
+  App.charts[chartKey] = new Chart(c, {
+    type:'line',
+    data:{ labels:d.labels, datasets:[
+      { label:'Registered (Cumulative)', data:d.registered, borderColor:C_NAVY, backgroundColor:C_NAVY, tension:.25, pointRadius:2, fill:false },
+      { label:'Pre-Assessment Taken (Cumulative)', data:d.pre, borderColor:C_YELLOW, backgroundColor:C_YELLOW, tension:.25, pointRadius:2, fill:false },
+      { label:'Post-Assessment Taken (Cumulative)', data:d.post, borderColor:C_PASS, backgroundColor:C_PASS, tension:.25, pointRadius:2, fill:false }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false,
+      scales:{ x:{ticks:{font:{size:9}}}, y:{beginAtZero:true, ticks:{precision:0}} } }
+  });
+}
+function makeAssessmentProgressChart(canvasId, chartKey, onBarClick){
+  const c = document.getElementById(canvasId);
+  if(!c) return;
+  const rows = assessmentProgressByInstitution();
+  App.charts[chartKey] = new Chart(c, {
+    type:'bar',
+    data:{
+      labels: rows.map(r=>institutionLabel(r)),
+      datasets:[
+        { label:'Registered', data: rows.map(r=>r.registered), backgroundColor:C_NAVY, borderRadius:5 },
+        { label:'Pre-Assessment Taken', data: rows.map(r=>r.pre), backgroundColor:C_YELLOW, borderRadius:5 },
+        { label:'Post-Assessment Taken', data: rows.map(r=>r.post), backgroundColor:C_PASS, borderRadius:5 }
+      ]
+    },
+    options:{ responsive:true, maintainAspectRatio:false,
+      scales:{ x:{ticks:{font:{size:9}}}, y:{beginAtZero:true, ticks:{precision:0}} },
+      onClick:(e, els) => { if(onBarClick && els.length) onBarClick(els[0].index); },
+      onHover:(e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
+  });
+}
+function makeQuizByInstChart(canvasId, chartKey, onBarClick){
+  const c = document.getElementById(canvasId);
+  if(!c) return;
+  const labels = DB.institutions.map(i=>institutionLabel(i));
+  const counts = DB.institutions.map(i=>DB.quizzes.filter(q=>q.institutionId===i.id).length);
+  App.charts[chartKey] = new Chart(c, {
+    type:'bar',
+    data:{ labels, datasets:[{ label:'Quiz Attempts', data:counts, backgroundColor:instColors(), borderRadius:5 }]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+      scales:{ x:{ticks:{font:{size:9}}}, y:{beginAtZero:true, ticks:{precision:0}} },
+      onClick:(e, els) => { if(onBarClick && els.length) onBarClick(els[0].index); },
+      onHover:(e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
+  });
+}
+function makeGenderDonut(canvasId, chartKey, counts){
+  const c = document.getElementById(canvasId);
+  if(!c) return;
+  App.charts[chartKey] = new Chart(c, {
+    type:'doughnut',
+    data:{ labels:GENDERS, datasets:[{ data:counts, backgroundColor:GENDER_COLORS }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}} }
+  });
+}
+/* Section 1 (Pre/Post Assessment Progress) + Section 2 (Quiz) — shared by
+   the IGSI Overview tab and the Taskforce dashboard. */
+function renderAssessmentQuizSections(){
   if(!window.Chart) return;
   cleanChartRegistry();
-
-  const instLabels = DB.institutions.map(i=>i.name.length>16? i.name.slice(0,15)+'…' : i.name);
-  const instCounts = DB.institutions.map(i=>DB.students.filter(s=>s.institutionId===i.id).length);
-  
-  const c1 = document.getElementById('chartByInst');
-  if(c1){
-    App.charts.byInst = new Chart(c1, {
-      type:'bar',
-      data:{labels:instLabels, datasets:[{label:'Students Registered', data:instCounts, backgroundColor:instColors(), borderRadius:5}]},
-      options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{ticks:{font:{size:9}}}, y:{beginAtZero:true, ticks:{precision:0}}},
-        onClick:(e, els) => { if(els.length) App.drillCampus(els[0].index); },
-        onHover:(e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; }}
-    });
-  }
-
-  const passCount = DB.quizzes.filter(q=>q.passed).length;
-  const failCount = DB.quizzes.filter(q=>!q.passed).length;
-  const c2 = document.getElementById('chartPassFail');
-  if(c2){
-    App.charts.passFail = new Chart(c2, {
-      type:'doughnut',
-      data:{labels:['Passed (≥70%)','Not Passed'], datasets:[{data:[passCount,failCount], backgroundColor:[C_PASS, C_FAIL]}]},
-      options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}},
-        onClick:(e, els) => { if(els.length) App.drillPassFail(els[0].index, null); },
-        onHover:(e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; }}
-    });
-  }
-  
-  const c3 = document.getElementById('chartPrePost');
-  if(c3){
-    const avgAwareness = (phase)=> meanSection1Pct(DB.surveys.filter(s=>s.phase===phase));
-    App.charts.prePost = new Chart(c3, {
-      type:'bar',
-      data:{labels:['Section 1 Knowledge Score (Mean % Correct)'], datasets:[
-        {label:'Pre-Campaign Baseline Data', data:[avgAwareness('pre').toFixed(2)], backgroundColor:C_YELLOW, borderRadius:5},
-        {label:'Post-Campaign Dynamic Index', data:[avgAwareness('post').toFixed(2)], backgroundColor:C_PASS, borderRadius:5}
-      ]},
-      options:{responsive:true, maintainAspectRatio:false, scales:{y:{beginAtZero:true, max:100}}}
-    });
-  }
-
-  // Charts based on students attempting the assessment survey / quiz (global scope)
-  makeParticipationChart('chartParticipation', 'participation', DB.students.length, participationCounts(null), idx => App.drillParticipation(idx, null));
-  makeScoreDistChart('chartScoreDist', 'scoreDist', DB.quizzes, idx => App.drillScoreDist(idx, null));
+  makeAssessmentTimelineChart('chartAssessmentTimeline', 'assessTimeline');
+  makeAssessmentProgressChart('chartAssessmentProgress', 'assessProgress', idx => App.drillInstituteProfile(idx));
+  makeQuizByInstChart('chartQuizByInst', 'quizByInst', idx => App.drillCampus(idx));
+  makeGenderDonut('chartQuizGender', 'quizGender', quizGenderProportion());
 }
 
 /* ============================================================
