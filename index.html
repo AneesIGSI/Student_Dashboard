@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Hum Hain Pakistan | SDG Youth Campaign Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=Georgia&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=Lora:wght@400;500;600;700&family=Georgia&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -32,11 +32,11 @@ html,body{margin:0;padding:0;}
 body{
   background:var(--cream);
   color:var(--ink);
-  font-family:'Inter',system-ui,sans-serif;
+  font-family:'Lora',system-ui,serif;
   min-height:100vh;
   -webkit-font-smoothing:antialiased;
 }
-h1,h2,h3,h4{font-family:'Poppins',system-ui,sans-serif; margin:0 0 6px 0; color:var(--forest-dark);}
+h1,h2,h3,h4{font-family:'Montserrat',system-ui,sans-serif; font-weight:700; margin:0 0 6px 0; color:var(--forest-dark);}
 p{margin:0 0 12px 0; line-height:1.55; color:var(--ink);}
 a{color:var(--forest);}
 button{font-family:inherit;}
@@ -57,7 +57,7 @@ button{font-family:inherit;}
 .topbar-logo{height:40px; width:40px; flex-shrink:0; background:var(--white);
   border-radius:50%; padding:2px; object-fit:contain;}
 @media(max-width:600px){.brand-mark,.topbar-logo{width:32px; height:32px;}}
-.brand-text .title{font-family:'Poppins'; font-weight:700; font-size:17px; letter-spacing:.2px;}
+.brand-text .title{font-family:'Montserrat'; font-weight:700; font-size:17px; letter-spacing:.2px;}
 .brand-text .subtitle{font-size:11.5px; color:var(--gold); font-weight:600; letter-spacing:.6px; text-transform:uppercase;}
 .role-pill{
   background:rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.25);
@@ -124,13 +124,13 @@ input:focus,select:focus,textarea:focus{outline:none; border-color:var(--forest)
 
 /* ---------- Impact ring (signature element) ---------- */
 .ring-wrap{display:flex; align-items:center; gap:22px; flex-wrap:wrap;}
-.ring-score{font-family:'Poppins'; font-weight:800; font-size:26px; fill:var(--forest-dark);}
+.ring-score{font-family:'Montserrat'; font-weight:800; font-size:26px; fill:var(--forest-dark);}
 
 /* ---------- Tables ---------- */
 table{width:100%; border-collapse:collapse; font-size:13.5px;}
 th{
   text-align:left; padding:10px 12px; background:var(--forest-tint); color:var(--forest-dark);
-  font-family:'Poppins'; font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.4px;
+  font-family:'Montserrat'; font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.4px;
   border-bottom:2px solid var(--line);
 }
 td{padding:10px 12px; border-bottom:1px solid var(--line); color:var(--ink);}
@@ -147,7 +147,7 @@ tr:hover td{background:#FBFDFA;}
   background:var(--white); border:1px solid var(--line); border-radius:var(--radius);
   padding:20px 22px; box-shadow:var(--shadow);
 }
-.stat-tile .num{font-family:'Poppins'; font-size:30px; font-weight:800; color:var(--forest-dark);}
+.stat-tile .num{font-family:'Montserrat'; font-size:30px; font-weight:800; color:var(--forest-dark);}
 .stat-tile .label{font-size:12.5px; color:var(--slate); font-weight:600; text-transform:uppercase; letter-spacing:.4px;}
 .stat-tile.gold .num{color:var(--gold-dark);}
 
@@ -158,7 +158,7 @@ tr:hover td{background:#FBFDFA;}
 /* ---------- Quiz / survey ---------- */
 .q-block{padding:18px 0; border-bottom:1px solid var(--line);}
 .q-block:last-child{border-bottom:none;}
-.q-num{color:var(--gold-dark); font-weight:800; font-family:'Poppins'; font-size:13px; margin-bottom:4px; display:block;}
+.q-num{color:var(--gold-dark); font-weight:800; font-family:'Montserrat'; font-size:13px; margin-bottom:4px; display:block;}
 .q-text{font-size:15px; font-weight:600; margin-bottom:12px; color:var(--forest-dark);}
 .opt{
   display:flex; align-items:center; gap:10px; padding:10px 14px; border:1.5px solid var(--line);
@@ -546,6 +546,10 @@ function studentToRow(s){
     student_name: fullStudentName(s),
     school_name: instNameById(s.institutionId),
     institution_id: s.institutionId,
+    gender: s.gender || '',
+    level: s.level || '',
+    class_name: s.className || '',
+    section_name: s.sectionName || '',
     registered_at: s.createdAt
   };
 }
@@ -647,7 +651,8 @@ async function pullFromBackend(){
       id: row.student_key,
       firstName: parts[0]||'', middleName: parts.length>2?parts.slice(1,-1).join(' '):'',
       lastName: parts.length>1?parts[parts.length-1]:'',
-      gender:'', institutionId, level:'', className:'', sectionName:'',
+      gender: row.gender || '', institutionId, level: row.level || '',
+      className: row.class_name || '', sectionName: row.section_name || '',
       createdAt: row.registered_at || new Date().toISOString()
     };
   });
@@ -1695,6 +1700,16 @@ const App = {
     drillChart('drillLeft', 'dl', drillDoughnutCfg(GENDERS, gCounts, GENDER_COLORS));
     drillChart('drillRight', 'dr', drillBarCfg(cls.labels, cls.counts, cls.labels.map((_,i)=>SDG_COLORS[i%SDG_COLORS.length])));
   },
+  drillTimelineDay(day){
+    const reg = newRegistrationsOnDayByInstitution(day);
+    const regCount = DB.students.filter(s=>dateOnly(s.createdAt)===day).length;
+    const preCount = DB.surveys.filter(s=>s.phase==='pre' && dateOnly(s.submittedAt)===day).length;
+    const postCount = DB.surveys.filter(s=>s.phase==='post' && dateOnly(s.submittedAt)===day).length;
+    openDrill(day, `${reg.labels.length} campus(es) added new registrations on this day`,
+      'New Registrations by Campus', 'Activity Split This Day');
+    drillChart('drillLeft', 'dl', drillBarCfg(reg.labels, reg.values, reg.labels.map((_,i)=>SDG_COLORS[i%SDG_COLORS.length])));
+    drillChart('drillRight', 'dr', drillDoughnutCfg(['Registered','Pre-Assessment','Post-Assessment'], [regCount,preCount,postCount], [C_NAVY, C_YELLOW, C_PASS]));
+  },
 
   /* ---------------- INSTITUTION FOCAL DESK ---------------- */
   showFocalLogin(){
@@ -1811,7 +1826,10 @@ const App = {
     this.el(`
       <div class="flex-between">
         <div><span class="eyebrow">Taskforce Executive System</span><h2>Campaign Topline Indicators</h2></div>
-        <button class="btn btn-outline no-print" onclick="App.logout()">Exit Deck</button>
+        <div style="display:flex;gap:10px;">
+          <button class="btn btn-gold no-print" id="genReportBtnTaskforce" onclick="App.generateAnalysisReport('genReportBtnTaskforce')">⬇ Generate Report (PDF)</button>
+          <button class="btn btn-outline no-print" onclick="App.logout()">Exit Deck</button>
+        </div>
       </div>
       <div class="grid grid-4">
         ${statTile(g.students,'Students Registered')}
@@ -2052,8 +2070,8 @@ const App = {
     this.showIgsiDashboard('questions');
   },
 
-  generateAnalysisReport(){
-    const btn = document.getElementById('genReportBtn');
+  generateAnalysisReport(buttonId){
+    const btn = document.getElementById(buttonId || 'genReportBtn');
     if(btn){ btn.disabled = true; btn.textContent = 'Generating Report…'; }
     const done = () => { if(btn){ btn.disabled = false; btn.innerHTML = '⬇ Generate Report (PDF)'; } };
     ensureChartJs(() => {
@@ -2397,7 +2415,7 @@ function scoreRingBlock(p, score, total, passed){
       <text x="70" y="76" text-anchor="middle" class="ring-score">${p}%</text>
     </svg>
     <div style="text-align:left;">
-      <div style="font-family:'Poppins';font-weight:700;font-size:16px;color:var(--forest-dark);">${score} / ${total} Correct Marks</div>
+      <div style="font-family:'Montserrat';font-weight:700;font-size:16px;color:var(--forest-dark);">${score} / ${total} Correct Marks</div>
       <div class="badge ${passed?'badge-pass':'badge-fail'}" style="margin-top:6px;">${passed?'Verification Passed':'Minimum Limit Not Reached'}</div>
     </div>
   </div>`;
@@ -2492,6 +2510,19 @@ function assessmentTimelineData(){
     pre: allDates.map(d=>countUpTo(preDates, d)),
     post: allDates.map(d=>countUpTo(postDates, d))
   };
+}
+/* For the timeline drill-down: which institutes contributed new
+   registrations on one specific day, and how that day split across
+   registered / pre / post overall. */
+function newRegistrationsOnDayByInstitution(day){
+  const events = DB.students.filter(s=>dateOnly(s.createdAt)===day);
+  const counts = new Map();
+  events.forEach(s=>{
+    const inst = DB.institutions.find(i=>i.id===s.institutionId);
+    const label = inst ? institutionLabel(inst) : 'Unknown Campus';
+    counts.set(label, (counts.get(label)||0)+1);
+  });
+  return { labels:[...counts.keys()], values:[...counts.values()] };
 }
 
 /* ============================================================
@@ -2864,7 +2895,9 @@ function makeAssessmentTimelineChart(canvasId, chartKey){
       { label:'Post-Assessment Taken (Cumulative)', data:d.post, borderColor:C_PASS, backgroundColor:C_PASS, tension:.25, pointRadius:2, fill:false }
     ]},
     options:{ responsive:true, maintainAspectRatio:false,
-      scales:{ x:{ticks:{font:{size:9}}}, y:{beginAtZero:true, ticks:{precision:0}} } }
+      scales:{ x:{ticks:{font:{size:9}}}, y:{beginAtZero:true, ticks:{precision:0}} },
+      onClick:(e, els) => { if(els.length) App.drillTimelineDay(d.labels[els[0].index]); },
+      onHover:(e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } }
   });
 }
 function makeAssessmentProgressChart(canvasId, chartKey, onBarClick){
