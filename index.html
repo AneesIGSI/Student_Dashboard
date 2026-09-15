@@ -626,12 +626,19 @@ function gateToRow(def){
 }
 function configRows(){
   const now = new Date().toISOString();
-  return [
+  const rows = [
     { key:'igsiPassword', value: DB.igsiPassword, updated_by:'IGSI Panel', updated_at: now },
     { key:'taskforcePassword', value: DB.taskforcePassword, updated_by:'IGSI Panel', updated_at: now },
-    { key:'questions', value: JSON.stringify(DB.questions), updated_by:'IGSI Panel', updated_at: now },
-    { key:'instrumentVersion', value: String(DB.instrumentVersion || INSTRUMENT_VERSION), updated_by:'IGSI Panel', updated_at: now }
   ];
+  /* Only the device that just re-seeded the instrument should push it —
+     every other device's routine push must not overwrite the shared
+     question bank with its own copy. */
+  if(_instrumentDirty){
+    rows.push({ key:'questions', value: JSON.stringify(DB.questions), updated_by:'IGSI Panel', updated_at: now });
+    rows.push({ key:'instrumentVersion', value: String(DB.instrumentVersion || INSTRUMENT_VERSION), updated_by:'IGSI Panel', updated_at: now });
+    _instrumentDirty = false;
+  }
+  return rows;
 }
 
 /* ---------- Pull: rebuild DB from the live sheet ---------- */
@@ -731,6 +738,9 @@ let _syncTimer = null, _syncInFlight = false, _syncQueued = false, _lastSyncErro
 let _lastPullAt = 0; // throttle guard: avoid stacking full pulls during a burst of near-simultaneous registrations
 let _institutionsDirty = false; // true only when THIS session actually added/edited/deleted/renamed an institution
 let _gatesDirty = false; // true only when THIS session actually toggled a phase gate/setting
+let _instrumentDirty = false; // true only when THIS device just re-seeded the question bank
+let _surveyInProgress = false; // true while a student is actively inside a pre/post survey form
+let _activeRole = null; // 'student' | 'focal' | 'taskforce' | 'igsi' | null — scopes background polling
 
 /* ---------- Push: send only what's new/changed to the live sheet ---------- */
 async function pushToBackend(){
@@ -846,14 +856,23 @@ async function bootSync(){
    object in memory — never touches the currently rendered screen, so no
    in-progress form (e.g. a student mid-quiz) is ever disrupted. */
 setInterval(async () => {
-  if(_syncInFlight || _syncTimer) return;
+  /* selectOption/selectLikert/toggleMulti never call saveData(), so a
+     student can spend several minutes inside a survey with nothing
+     blocking this interval otherwise — _surveyInProgress guards that.
+     Separately: idle students sitting on their own home screen don't
+     need a live aggregate refresh the way admin/focal dashboards do, and
+     at hundreds of concurrent students that background polling alone was
+     a major share of the load hitting Apps Script. Only poll for roles
+     that actually display live shared numbers. */
+  if(_syncInFlight || _syncTimer || _surveyInProgress) return;
+  if(_activeRole !== 'focal' && _activeRole !== 'taskforce' && _activeRole !== 'igsi') return;
   try{
     const remote = await pullFromBackend();
     if(remote){ DB = remote; saveLocalData(DB); updateSyncBadge('synced'); }
   }catch(err){
     console.error('Background backend refresh failed:', err);
   }
-}, 40000);
+}, 60000);
 
 function uid(prefix){ return prefix+'_'+Math.random().toString(36).slice(2,10); }
 function genKey(){ return 'HHP-'+Math.random().toString(36).slice(2,6).toUpperCase(); }
@@ -1066,12 +1085,13 @@ function defaultQuestionBanks(){
    Runs after the initial sync so the version we compare against is the
    shared one, not a stale local copy. */
 function applyInstrumentVersion(){
-  if(!DB.questions){ DB.questions = defaultQuestionBanks(); DB.instrumentVersion = INSTRUMENT_VERSION; saveData(); return; }
+  if(!DB.questions){ DB.questions = defaultQuestionBanks(); DB.instrumentVersion = INSTRUMENT_VERSION; _instrumentDirty = true; saveData(); return; }
   if(Number(DB.instrumentVersion||0) < INSTRUMENT_VERSION){
     const banks = defaultQuestionBanks();
     DB.questions.pre  = banks.pre;
     DB.questions.post = banks.post;      // quiz bank is left alone
     DB.instrumentVersion = INSTRUMENT_VERSION;
+    _instrumentDirty = true;
     saveData();
   }
 }
@@ -1124,6 +1144,7 @@ const App = {
 
   /* ---------------- LANDING SYSTEM ---------------- */
   showLanding(){
+    _activeRole = null;
     this.setRoleIndicator(null);
     this.el(`
       <div class="hero">
@@ -1401,6 +1422,7 @@ const App = {
   showStudentHome(){
     const stu = this.currentStudent();
     if(!stu){ this.showStudentRegister(); return; }
+    _activeRole = 'student';
     this.setRoleIndicator('Student · '+getStudentFullName(stu));
     const inst = DB.institutions.find(i=>i.id===stu.institutionId);
     const preDone = DB.surveys.some(s=>s.studentId===stu.id && s.phase==='pre');
@@ -1446,6 +1468,7 @@ const App = {
     if(already){ this.showStudentHome(); return; }
     this.state.surveyDraft = {};
     this.surveyStep = 0;
+    _surveyInProgress = true;
     this.showSurveyForm(phase, 0);
   },
   /* ---------- Sectioned survey form ----------
@@ -1543,6 +1566,7 @@ const App = {
     if(answered>0 && !confirm('Leave the assessment? Your answers so far will not be saved.')) return;
     this.state.surveyDraft = {};
     this.surveyStep = 0;
+    _surveyInProgress = false;
     this.showStudentHome();
   },
   selectLikert(qid, val, bucket){
@@ -1588,6 +1612,7 @@ const App = {
     saveData();
     this.state.surveyDraft = {};
     this.surveyStep = 0;
+    _surveyInProgress = false;
     this.el(`
       <div class="card" style="max-width:520px;margin:60px auto;text-align:center;">
         <h2>Assessment Recorded! ✅</h2>
@@ -1851,6 +1876,7 @@ const App = {
     this.showFocalDashboard();
   },
   showFocalDashboard(){
+    _activeRole = 'focal';
     const inst = DB.institutions.find(i=>i.id===this.state.focalInstitutionId);
     this.setRoleIndicator('Focal Person · '+inst.name);
     const stats = institutionStats(inst.id);
@@ -1929,6 +1955,7 @@ const App = {
     this.showTaskforceDashboard();
   },
   showTaskforceDashboard(){
+    _activeRole = 'taskforce';
     this.setRoleIndicator('SDG Taskforce Central Hub');
     const g = globalStats();
     const qs = quizStatsGlobal();
@@ -2003,6 +2030,7 @@ const App = {
   igsiTab: 'overview',
   showIgsiDashboard(tab){
     this.igsiTab = tab || this.igsiTab;
+    _activeRole = 'igsi';
     this.setRoleIndicator('IGSI Campaign Operations Board');
     const g = globalStats();
     const tabs = ['overview','institutions','questions','analysis','settings','export'];
