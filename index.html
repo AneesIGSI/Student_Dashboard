@@ -461,6 +461,25 @@ async function fetchSheet(sheet){
   if(data && data.error) throw new Error('Read failed for '+sheet+': '+data.error);
   return Array.isArray(data) ? data : [];
 }
+/* Apps Script has real concurrent-execution limits against the same
+   spreadsheet. Firing all 6 sheet reads at once (Promise.all) trips that
+   ceiling under real classroom load — this fetches them one at a time
+   instead, with one automatic retry per sheet on failure, trading a
+   little speed for not throwing a 404/error page mid-sync. */
+async function fetchSheetWithRetry(sheet, attempts){
+  attempts = attempts || 2;
+  let lastErr;
+  for(let i=0; i<attempts; i++){
+    try{ return await fetchSheet(sheet); }
+    catch(e){ lastErr = e; if(i<attempts-1) await new Promise(r=>setTimeout(r, 400)); }
+  }
+  throw lastErr;
+}
+async function fetchSheetsSerially(sheets){
+  const results = [];
+  for(const s of sheets){ results.push(await fetchSheetWithRetry(s)); }
+  return results;
+}
 async function callAppsScript_(payload){
   const res = await fetch(APPS_SCRIPT_API, {
     method:'POST',
@@ -617,10 +636,9 @@ function configRows(){
 
 /* ---------- Pull: rebuild DB from the live sheet ---------- */
 async function pullFromBackend(){
-  const [studentRows, surveyRows, quizRows, campusRows, gateRows, configRowsRemote] = await Promise.all([
-    fetchSheet('students'), fetchSheet('surveys'), fetchSheet('quiz_results'),
-    fetchSheet('focal_campuses'), fetchSheet('operational_gates'), fetchSheet('app_config')
-  ]);
+  const [studentRows, surveyRows, quizRows, campusRows, gateRows, configRowsRemote] = await fetchSheetsSerially(
+    ['students', 'surveys', 'quiz_results', 'focal_campuses', 'operational_gates', 'app_config']
+  );
   if(!studentRows.length && !surveyRows.length && !quizRows.length && !campusRows.length && !gateRows.length && !configRowsRemote.length){
     return null; // sheet is completely empty -> first-ever run, caller should seed it
   }
@@ -1138,6 +1156,78 @@ const App = {
 
   backToLanding(){ this.showLanding(); },
 
+  /* Same-form duplicate detection: matches on institution + normalized full
+     name. Class is used as a tie-breaker only when BOTH records have one —
+     an existing record with a blank class (the "missing data" case this
+     was built for) still matches, so it can be backfilled rather than
+     spawning a duplicate. */
+  findLikelyExistingStudent(draft){
+    const fullName = fullStudentName(draft).trim().toLowerCase();
+    if(!fullName) return null;
+    return DB.students.find(s=>{
+      if(s.institutionId !== draft.institutionId) return false;
+      if(fullStudentName(s).trim().toLowerCase() !== fullName) return false;
+      const existingClass = (s.className||'').trim().toLowerCase();
+      const draftClass = (draft.className||'').trim().toLowerCase();
+      if(existingClass && draftClass && existingClass !== draftClass) return false;
+      return true;
+    });
+  },
+  showPossibleDuplicateConfirm(match, draft){
+    this.setRoleIndicator('Student Enrollment');
+    const preDone = DB.surveys.find(s=>s.studentId===match.id && s.phase==='pre');
+    const postDone = DB.surveys.find(s=>s.studentId===match.id && s.phase==='post');
+    const quizDone = DB.quizzes.some(q=>q.studentId===match.id);
+    const statusLines = [
+      preDone ? `Pre-assessment completed on ${new Date(preDone.submittedAt).toLocaleDateString()}` : 'Pre-assessment not yet completed',
+      postDone ? `Post-assessment completed on ${new Date(postDone.submittedAt).toLocaleDateString()}` : 'Post-assessment not yet completed',
+      quizDone ? 'SDG quiz already attempted' : 'SDG quiz not yet attempted'
+    ];
+    this.state.pendingDuplicateDraft = draft;
+    this.el(`
+      <div class="card" style="max-width:560px;margin:0 auto;">
+        <span class="eyebrow">Possible Existing Registration</span>
+        <h2>Is this already you?</h2>
+        <p class="muted">We found a student with the same name and class already registered at this campus:</p>
+        <table><tbody>
+          <tr><td><b>Name</b></td><td>${escapeHtml(getStudentFullName(match))}</td></tr>
+          <tr><td><b>Class</b></td><td>${escapeHtml(match.className||'—')}</td></tr>
+        </tbody></table>
+        <ul class="muted" style="margin-top:12px;padding-left:18px;font-size:13.5px;">
+          ${statusLines.map(l=>`<li>${escapeHtml(l)}</li>`).join('')}
+        </ul>
+        <div style="display:flex;gap:10px;margin-top:16px;">
+          <button class="btn btn-gold" style="flex:1;" onclick="App.confirmSameStudent('${match.id}')">Yes, that's me</button>
+          <button class="btn btn-outline" style="flex:1;" onclick="App.forceNewFromDuplicateCheck()">No, register as new</button>
+        </div>
+      </div>
+    `);
+  },
+  confirmSameStudent(id){
+    const stu = DB.students.find(s=>s.id===id);
+    const draft = this.state.pendingDuplicateDraft;
+    if(stu && draft){
+      // Backfill anything the existing record is missing, without
+      // overwriting fields it already has.
+      if(!stu.gender && draft.gender) stu.gender = draft.gender;
+      if(!stu.level && draft.level) stu.level = draft.level;
+      if(!stu.className && draft.className) stu.className = draft.className;
+      if(!stu.sectionName && draft.sectionName) stu.sectionName = draft.sectionName;
+      saveData();
+    }
+    this.state.pendingDuplicateDraft = null;
+    this.state.registerDraft = null;
+    if(stu){
+      this.state.studentId = stu.id;
+      sessionStorage.setItem('hhp_student_id', stu.id);
+    }
+    this.showStudentHome();
+  },
+  forceNewFromDuplicateCheck(){
+    this.state.confirmedNewDespiteMatch = true;
+    this.executeFinalRegistration(false);
+  },
+
   /* ---------------- STUDENT PROFILE CREATION ---------------- */
   showStudentRegister(editMode){
     this.setRoleIndicator('Student Enrollment');
@@ -1232,7 +1322,7 @@ const App = {
 
     const authKey = document.getElementById('regAuthKey').value.trim().toUpperCase();
     const inst = DB.institutions.find(i=>i.id===institutionId);
-    if(!inst || !inst.key || inst.key.toUpperCase() !== authKey){
+    if(!inst || !inst.key || inst.key.trim().toUpperCase() !== authKey){
       document.getElementById('regError').innerHTML = `<div class="error-box" style="border-radius:10px;">Authorization key does not match the selected institution. Get the correct key from your focal person.</div>`;
       return;
     }
@@ -1262,13 +1352,13 @@ const App = {
         </table>
 
         <div class="btn-row">
-          <button class="btn btn-gold" style="flex:1;" onclick="App.executeFinalRegistration(${editMode})">Confirm & Save Changes</button>
+          <button class="btn btn-gold" id="regSubmitBtn" style="flex:1;" onclick="App.executeFinalRegistration(${editMode})">Confirm & Save Changes</button>
           <button class="btn btn-outline" style="flex:1;" onclick="App.showStudentRegister(${editMode})">Modify Configuration</button>
         </div>
       </div>
     `);
   },
-  executeFinalRegistration(editMode){
+  async executeFinalRegistration(editMode){
     const draft = this.state.registerDraft;
     if(editMode){
       const stu = this.currentStudent();
@@ -1278,6 +1368,18 @@ const App = {
       this.showStudentHome();
       return;
     }
+    if(!this.state.confirmedNewDespiteMatch){
+      const btn = document.getElementById('regSubmitBtn');
+      if(btn){ btn.disabled = true; btn.textContent = 'Checking existing registrations…'; }
+      try{
+        const remote = await pullFromBackend();
+        if(remote){ DB = remote; saveLocalData(DB); }
+      }catch(e){ /* proceed against whatever's cached locally rather than block registration entirely */ }
+      if(btn){ btn.disabled = false; btn.textContent = 'Confirm & Save Changes'; }
+      const possibleMatch = this.findLikelyExistingStudent(draft);
+      if(possibleMatch){ this.showPossibleDuplicateConfirm(possibleMatch, draft); return; }
+    }
+    this.state.confirmedNewDespiteMatch = false;
     const student = Object.assign({id: uid('stu'), createdAt: new Date().toISOString()}, draft);
     DB.students.push(student); 
     saveData();
@@ -1734,7 +1836,7 @@ const App = {
     const instId = document.getElementById('focalInstitution').value;
     const key = document.getElementById('focalKey').value.trim().toUpperCase();
     const inst = DB.institutions.find(i=>i.id===instId);
-    if(!inst || !inst.key || inst.key.toUpperCase() !== key){
+    if(!inst || !inst.key || inst.key.trim().toUpperCase() !== key){
       document.getElementById('focalError').innerHTML = `<div class="error-box" style="border-radius:10px;">Verification mismatch. Pinpoint focal settings block configuration parameters.</div>`;
       return;
     }
