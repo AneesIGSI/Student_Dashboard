@@ -639,6 +639,7 @@ async function pullFromBackend(){
   const [studentRows, surveyRows, quizRows, campusRows, gateRows, configRowsRemote] = await fetchSheetsSerially(
     ['students', 'surveys', 'quiz_results', 'focal_campuses', 'operational_gates', 'app_config']
   );
+  _lastPullAt = Date.now();
   if(!studentRows.length && !surveyRows.length && !quizRows.length && !campusRows.length && !gateRows.length && !configRowsRemote.length){
     return null; // sheet is completely empty -> first-ever run, caller should seed it
   }
@@ -727,6 +728,7 @@ async function pullFromBackend(){
 }
 
 let _syncTimer = null, _syncInFlight = false, _syncQueued = false, _lastSyncError = '';
+let _lastPullAt = 0; // throttle guard: avoid stacking full pulls during a burst of near-simultaneous registrations
 let _institutionsDirty = false; // true only when THIS session actually added/edited/deleted/renamed an institution
 let _gatesDirty = false; // true only when THIS session actually toggled a phase gate/setting
 
@@ -1370,12 +1372,17 @@ const App = {
     }
     if(!this.state.confirmedNewDespiteMatch){
       const btn = document.getElementById('regSubmitBtn');
-      if(btn){ btn.disabled = true; btn.textContent = 'Checking existing registrations…'; }
-      try{
-        const remote = await pullFromBackend();
-        if(remote){ DB = remote; saveLocalData(DB); }
-      }catch(e){ /* proceed against whatever's cached locally rather than block registration entirely */ }
-      if(btn){ btn.disabled = false; btn.textContent = 'Confirm & Save Changes'; }
+      // Throttled: skip the fresh pull if one just happened moments ago
+      // (e.g. several students submitting within the same minute), so a
+      // classroom burst doesn't stack up full syncs on top of each other.
+      if(Date.now() - _lastPullAt > 15000){
+        if(btn){ btn.disabled = true; btn.textContent = 'Checking existing registrations…'; }
+        try{
+          const remote = await pullFromBackend();
+          if(remote){ DB = remote; saveLocalData(DB); }
+        }catch(e){ /* proceed against whatever's cached locally rather than block registration entirely */ }
+        if(btn){ btn.disabled = false; btn.textContent = 'Confirm & Save Changes'; }
+      }
       const possibleMatch = this.findLikelyExistingStudent(draft);
       if(possibleMatch){ this.showPossibleDuplicateConfirm(possibleMatch, draft); return; }
     }
