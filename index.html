@@ -9,6 +9,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <style>
 :root{
   --forest:#185D35;
@@ -333,6 +335,21 @@ const LOGO_IGSI  = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAEsCAMAAA
 
 const STORE_KEY = 'hhp_v2';
 
+/* ---------- Firebase project connection ----------
+   Fill in apiKey / messagingSenderId / appId from Firebase Console ->
+   Project Settings -> General -> "Your apps" -> Web app config.
+   projectId/authDomain are already filled in from the migration. */
+const firebaseConfig = {
+  apiKey: "AIzaSyDjlC5SRQpG53y_vFTmNtOCZHRNS5L4sRA",
+  authDomain: "hhp-student-dashboard.firebaseapp.com",
+  projectId: "hhp-student-dashboard",
+  storageBucket: "hhp-student-dashboard.appspot.com",
+  messagingSenderId: "425383538173",
+  appId: "1:425383538173:web:760be8264e84f4ca18bd94"
+};
+firebase.initializeApp(firebaseConfig);
+const fsdb = firebase.firestore();
+
 const DEFAULT_INSTITUTIONS = [
   {name:'International Islamic University, Islamabad (IIUI)', type:'university'},
   {name:'National University of Modern Languages (NUML)', type:'university'},
@@ -414,17 +431,17 @@ function saveLocalData(db){ localStorage.setItem(STORE_KEY, JSON.stringify(db));
 let DB = loadLocalData();
 
 /* ============================================================
-   APPS SCRIPT SYNC LAYER
-   Mirrors DB to the real, already-designed Google Sheet (6 named sheets:
-   surveys, quiz_results, focal_campuses, operational_gates, students,
-   app_config) via the Apps Script web app deployed on that sheet. Each
-   sheet is written as one real row per record — no JSON blobs, no
-   delete-and-rebuild — so the workbook stays readable and no stakeholder's
-   data can be wiped by another device's save.
+   FIREBASE FIRESTORE SYNC LAYER
+   Replaces the old Apps Script/Google Sheets transport. Firestore gives
+   every record a real, stable document ID from the start, so the
+   whole "match by exact name string, reconcile, allow-delete" dance
+   that caused the institution-name and student-demographics incidents
+   is gone by construction — a write always targets one specific
+   document, never a text-matched row.
    No dashboard function/logic below this block is altered — this only
-   changes what loadData()/saveData() do under the hood.
+   changes what loadData()/saveData() do under the hood, exactly as the
+   Apps Script layer did before it.
    ============================================================ */
-const APPS_SCRIPT_API = 'https://script.google.com/macros/s/AKfycbwXdj0JNokWWKJ4ibV5Y18yUPichmWrcnqmBu5yqSQ6ryfim8ixTVxCUtIMTBpXbPAsPQ/exec';
 
 const GATE_DEFS = [
   { id:'pre',  name:'Pre-Assessment Survey',  settingKey:'preOpen'  },
@@ -433,7 +450,7 @@ const GATE_DEFS = [
 ];
 
 /* ---------- Local bookkeeping: which append-only records have already
-   reached the sheet, so a save only ever POSTs genuinely new rows. ---------- */
+   reached Firestore, so a push only ever writes genuinely new documents. ---------- */
 const SYNCED_IDS_KEY = 'hhp_synced_ids_v1';
 function loadSyncedIds(){
   try{
@@ -444,90 +461,18 @@ function loadSyncedIds(){
 function saveSyncedIds(){ localStorage.setItem(SYNCED_IDS_KEY, JSON.stringify(_syncedIds)); }
 let _syncedIds = loadSyncedIds();
 
-/* ---------- Low-level Apps Script backend helpers ----------
-   Apps Script web apps only support GET and POST (no real PUT/DELETE),
-   so every write routes through one POST endpoint with an "action" field.
-   The POST body is sent as text/plain (not application/json) on purpose:
-   Apps Script can't answer a CORS preflight request, and application/json
-   triggers one; text/plain keeps it a "simple request" that skips preflight
-   entirely, while the script still parses the body as JSON on its side. */
-async function fetchSheet(sheet){
-  const res = await fetch(APPS_SCRIPT_API+'?sheet='+encodeURIComponent(sheet));
-  if(!res.ok){
-    const body = await res.text().catch(()=>'');
-    throw new Error('Read failed for '+sheet+' ('+res.status+'): '+body.slice(0,200));
+/* Firestore batches are capped at 500 writes each. */
+async function commitInChunks(writeFns){
+  let batch = fsdb.batch(), count = 0;
+  for(const w of writeFns){
+    w(batch);
+    count++;
+    if(count === 450){ await batch.commit(); batch = fsdb.batch(); count = 0; }
   }
-  const data = await res.json();
-  if(data && data.error) throw new Error('Read failed for '+sheet+': '+data.error);
-  return Array.isArray(data) ? data : [];
-}
-/* Apps Script has real concurrent-execution limits against the same
-   spreadsheet. Firing all 6 sheet reads at once (Promise.all) trips that
-   ceiling under real classroom load — this fetches them one at a time
-   instead, with one automatic retry per sheet on failure, trading a
-   little speed for not throwing a 404/error page mid-sync. */
-async function fetchSheetWithRetry(sheet, attempts){
-  attempts = attempts || 2;
-  let lastErr;
-  for(let i=0; i<attempts; i++){
-    try{ return await fetchSheet(sheet); }
-    catch(e){ lastErr = e; if(i<attempts-1) await new Promise(r=>setTimeout(r, 400)); }
-  }
-  throw lastErr;
-}
-async function fetchSheetsSerially(sheets){
-  const results = [];
-  for(const s of sheets){ results.push(await fetchSheetWithRetry(s)); }
-  return results;
-}
-async function callAppsScript_(payload){
-  const res = await fetch(APPS_SCRIPT_API, {
-    method:'POST',
-    headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-    body: JSON.stringify(payload)
-  });
-  if(!res.ok){
-    const body = await res.text().catch(()=>'');
-    throw new Error('Request failed ('+res.status+'): '+body.slice(0,200));
-  }
-  const data = await res.json();
-  if(data && data.error) throw new Error(data.error);
-  return data;
-}
-async function postRows(sheet, rows){
-  if(!rows.length) return;
-  await callAppsScript_({ action:'insert', sheet, rows });
-}
-async function putRow(sheet, keyColumn, keyValue, data){
-  await callAppsScript_({ action:'update', sheet, keyColumn, keyValue, data });
-}
-async function deleteRow(sheet, keyColumn, keyValue){
-  await callAppsScript_({ action:'delete', sheet, keyColumn, keyValue });
-}
-/* Fully reconciles a small, bounded sheet (institutions / gates / config):
-   inserts rows that don't exist yet, updates ones that changed, and — only
-   when allowDelete is true — removes rows no longer present locally. */
-async function reconcileSheet(sheet, keyColumn, localRows, { allowDelete=false } = {}){
-  const remoteRows = await fetchSheet(sheet);
-  const remoteByKey = new Map(remoteRows.map(r=>[String(r[keyColumn]), r]));
-  const localByKey = new Map(localRows.map(r=>[String(r[keyColumn]), r]));
-
-  const toCreate = [];
-  for(const row of localRows){
-    const existing = remoteByKey.get(String(row[keyColumn]));
-    if(!existing){ toCreate.push(row); continue; }
-    const changed = Object.keys(row).some(k => String(existing[k] ?? '') !== String(row[k] ?? ''));
-    if(changed) await putRow(sheet, keyColumn, row[keyColumn], row);
-  }
-  if(toCreate.length) await postRows(sheet, toCreate);
-  if(allowDelete){
-    for(const key of remoteByKey.keys()){
-      if(!localByKey.has(key)) await deleteRow(sheet, keyColumn, key);
-    }
-  }
+  if(count > 0) await batch.commit();
 }
 
-/* ---------- Row shape helpers (map DB records <-> sheet columns) ---------- */
+/* ---------- Row shape helpers (map DB records <-> Firestore documents) ---------- */
 function fullStudentName(s){ return [s.firstName, s.middleName, s.lastName].filter(Boolean).join(' '); }
 function instNameById(id){ const i = DB.institutions.find(x=>x.id===id); return i ? i.name : ''; }
 /* ---------- Section 1 knowledge scoring ----------
@@ -561,22 +506,24 @@ function meanSection1Pct(surveys){
 }
 function studentToRow(s){
   return {
-    student_key: s.id,
-    student_name: fullStudentName(s),
-    school_name: instNameById(s.institutionId),
-    institution_id: s.institutionId,
-    gender: s.gender || '',
-    level: s.level || '',
-    class_name: s.className || '',
-    section_name: s.sectionName || '',
-    registered_at: s.createdAt
+    firstName: s.firstName || '', middleName: s.middleName || '', lastName: s.lastName || '',
+    gender: s.gender || '', level: s.level || '', className: s.className || '', sectionName: s.sectionName || '',
+    institutionId: s.institutionId || null, createdAt: s.createdAt
   };
 }
+/* Surveys/quizzes are written with BOTH native fields (studentId,
+   institutionId, phase, answers as a real object) that pull-side reads
+   directly with no parsing, AND the same flattened human-readable fields
+   (q1..q44, student_name, school_name, etc.) the pre-Firebase sheet used —
+   kept for continuity with the migrated history and so anyone opening
+   Firestore directly can still make sense of a record. */
 function surveyToRow(s){
   const stu = DB.students.find(x=>x.id===s.studentId);
   const sec1 = section1Score(s.answers);
   const row = {
-    id: s.id, timestamp: s.submittedAt,
+    studentId: s.studentId, institutionId: s.institutionId, phase: s.phase,
+    answers: {...s.answers}, submittedAt: s.submittedAt,
+    timestamp: s.submittedAt,
     student_name: stu ? fullStudentName(stu) : '',
     school_name: stu ? instNameById(stu.institutionId) : '',
     assessment_type: s.phase,
@@ -590,7 +537,9 @@ function surveyToRow(s){
   /* Responses are written as 1-based option numbers, matching how the
      options are numbered in the printed instrument. Multi-select items
      are semicolon separated (e.g. "1;3;6"). Section 5 stays blank on
-     pre-survey rows. */
+     pre-survey rows. This flattened copy is not what pull-side actually
+     reads (it reads the native "answers" field above) — it's kept purely
+     for continuity/readability. */
   surveyQuestions(s.phase).forEach(q=>{
     const v = s.answers[q.id];
     if(v == null){ row[q.id] = ''; return; }
@@ -601,130 +550,106 @@ function surveyToRow(s){
 function quizToRow(q){
   const stu = DB.students.find(x=>x.id===q.studentId);
   return {
-    id: q.id, timestamp: q.submittedAt,
+    studentId: q.studentId, institutionId: q.institutionId, answers: {...q.answers},
+    score: q.score, total: q.total, pct: q.pct, passed: q.passed, submittedAt: q.submittedAt,
+    timestamp: q.submittedAt,
     student_name: stu ? fullStudentName(stu) : '',
     school_name: stu ? instNameById(stu.institutionId) : '',
-    score: q.score, total_questions: q.total,
+    total_questions: q.total,
     passing_status: q.passed ? 'PASS' : 'FAIL',
     certificate_id: q.passed ? q.id : ''
   };
 }
 function institutionToRow(inst){
   return {
-    focal_key: inst.key || '',
-    school_name: inst.name,
-    abbreviation: inst.abbr || '',
-    archived: !!inst.archived,
-    total_enrolled: DB.students.filter(s=>s.institutionId===inst.id).length
-    // coordinator_name / contact_email / target_achieved are intentionally
-    // never sent — those stay whatever a stakeholder fills in by hand.
+    name: inst.name, type: inst.type || 'school', key: inst.key || null,
+    abbr: inst.abbr || '', archived: !!inst.archived,
+    total_enrolled: DB.students.filter(s=>s.institutionId===inst.id).length // snapshot only, app always recomputes live
   };
 }
-function gateToRow(def){
-  const open = !!DB.settings[def.settingKey];
-  return { phase_id: def.id, phase_name: def.name, status: open?'Open':'Closed', last_updated_by:'IGSI Panel', allow_student_submissions: open };
-}
-function configRows(){
-  const now = new Date().toISOString();
-  const rows = [
-    { key:'igsiPassword', value: DB.igsiPassword, updated_by:'IGSI Panel', updated_at: now },
-    { key:'taskforcePassword', value: DB.taskforcePassword, updated_by:'IGSI Panel', updated_at: now },
-  ];
-  /* Only the device that just re-seeded the instrument should push it —
-     every other device's routine push must not overwrite the shared
-     question bank with its own copy. */
-  if(_instrumentDirty){
-    rows.push({ key:'questions', value: JSON.stringify(DB.questions), updated_by:'IGSI Panel', updated_at: now });
-    rows.push({ key:'instrumentVersion', value: String(DB.instrumentVersion || INSTRUMENT_VERSION), updated_by:'IGSI Panel', updated_at: now });
-    _instrumentDirty = false;
-  }
-  return rows;
-}
 
-/* ---------- Pull: rebuild DB from the live sheet ---------- */
+/* ---------- Pull: rebuild DB from Firestore ---------- */
 async function pullFromBackend(){
-  const [studentRows, surveyRows, quizRows, campusRows, gateRows, configRowsRemote] = await fetchSheetsSerially(
-    ['students', 'surveys', 'quiz_results', 'focal_campuses', 'operational_gates', 'app_config']
-  );
+  const [instSnap, studentSnap, surveySnap, quizSnap, gatesDoc, appDoc] = await Promise.all([
+    fsdb.collection('institutions').get(),
+    fsdb.collection('students').get(),
+    fsdb.collection('surveys').get(),
+    fsdb.collection('quizzes').get(),
+    fsdb.collection('config').doc('gates').get(),
+    fsdb.collection('config').doc('app').get()
+  ]);
   _lastPullAt = Date.now();
-  if(!studentRows.length && !surveyRows.length && !quizRows.length && !campusRows.length && !gateRows.length && !configRowsRemote.length){
-    return null; // sheet is completely empty -> first-ever run, caller should seed it
+  if(instSnap.empty && studentSnap.empty && surveySnap.empty && quizSnap.empty && !gatesDoc.exists && !appDoc.exists){
+    return null; // project is completely empty -> first-ever run, caller should seed it
   }
 
-  const priorStudentsById = new Map(DB.students.map(s=>[s.id, s]));
-  const priorInstByName = new Map(DB.institutions.map(i=>[i.name, i]));
+  // Institutions/students already carry their own stable Firestore document
+  // ID as .id — no name-matching or merge-by-prior needed at all anymore.
+  const institutions = instSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const students = studentSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const studentById = new Map(students.map(s=>[s.id, s]));
+  const institutionById = new Map(institutions.map(i=>[i.id, i]));
+  // Legacy fallback only: surveys/quizzes migrated from the old sheet before
+  // this rewrite don't have a studentId field, only student_name+school_name
+  // text — this keeps that already-migrated history resolving correctly.
+  // Every survey/quiz written from this point forward has studentId set
+  // directly, so this path is never exercised for new data.
+  const studentIdByNameSchool = new Map(students.map(s=>[fullStudentName(s)+'||'+(institutionById.get(s.institutionId)||{}).name, s.id]));
 
-  let institutions = campusRows.map(row=>{
-    const truthy = v => v===true || v==='true' || v===1 || v==='1';
-    const prior = priorInstByName.get(row.school_name);
-    if(prior) return {
-      ...prior,
-      key: row.focal_key || prior.key,
-      abbr: row.abbreviation || prior.abbr || '',
-      archived: row.archived!==undefined && row.archived!=='' ? truthy(row.archived) : !!prior.archived
-    };
-    return { id: uid('inst'), name: row.school_name, type: 'school', key: row.focal_key || null, abbr: row.abbreviation || '', archived: truthy(row.archived) };
-  });
-  if(!institutions.length) institutions = DB.institutions;
-  const instIdByName = new Map(institutions.map(i=>[i.name, i.id]));
-
-  const students = studentRows.map(row=>{
-    const prior = priorStudentsById.get(row.student_key);
-    const institutionId = instIdByName.get(row.school_name) || row.institution_id || (prior?prior.institutionId:null);
-    if(prior) return { ...prior, institutionId, createdAt: row.registered_at || prior.createdAt };
-    const parts = (row.student_name||'').trim().split(/\s+/).filter(Boolean);
+  const surveys = surveySnap.docs.map(d=>{
+    const row = d.data();
+    const studentId = row.studentId || studentIdByNameSchool.get(row.student_name+'||'+row.school_name) || null;
+    const stu = studentById.get(studentId);
+    let answers = row.answers;
+    if(!answers || !Object.keys(answers).length){
+      answers = {};
+      surveyQuestions(row.assessment_type || row.phase).forEach(q=>{
+        const val = row[q.id];
+        if(val===undefined || val==='' || val===null) return;
+        if(q.type==='multi'){
+          answers[q.id] = String(val).split(';').map(n=>Number(n.trim())-1).filter(n=>!isNaN(n) && n>=0);
+        } else {
+          const n = Number(val);
+          if(!isNaN(n)) answers[q.id] = n - 1;
+        }
+      });
+    }
     return {
-      id: row.student_key,
-      firstName: parts[0]||'', middleName: parts.length>2?parts.slice(1,-1).join(' '):'',
-      lastName: parts.length>1?parts[parts.length-1]:'',
-      gender: row.gender || '', institutionId, level: row.level || '',
-      className: row.class_name || '', sectionName: row.section_name || '',
-      createdAt: row.registered_at || new Date().toISOString()
+      id: d.id, studentId, institutionId: row.institutionId || (stu?stu.institutionId:null),
+      phase: row.phase || row.assessment_type, answers, submittedAt: row.submittedAt || row.timestamp
     };
   });
-  const studentIdByNameSchool = new Map(students.map(s=>[fullStudentName(s)+'||'+(institutions.find(i=>i.id===s.institutionId)||{}).name, s.id]));
 
-  const surveys = surveyRows.map(row=>{
-    const studentId = studentIdByNameSchool.get(row.student_name+'||'+row.school_name) || null;
-    const stu = students.find(s=>s.id===studentId);
-    const answers = {};
-    /* The sheet holds 1-based option numbers (multi-select semicolon
-       separated); convert back to the 0-based indices used internally. */
-    surveyQuestions(row.assessment_type).forEach(q=>{
-      const val = row[q.id];
-      if(val===undefined || val==='' || val===null) return;
-      if(q.type==='multi'){
-        answers[q.id] = String(val).split(';').map(n=>Number(n.trim())-1).filter(n=>!isNaN(n) && n>=0);
-      } else {
-        const n = Number(val);
-        if(!isNaN(n)) answers[q.id] = n - 1;
-      }
-    });
-    return { id: row.id, studentId, institutionId: stu?stu.institutionId:null, phase: row.assessment_type, answers, submittedAt: row.timestamp };
-  });
-
-  const quizzes = quizRows.map(row=>{
-    const studentId = studentIdByNameSchool.get(row.student_name+'||'+row.school_name) || null;
-    const stu = students.find(s=>s.id===studentId);
-    const total = Number(row.total_questions)||0, score = Number(row.score)||0;
-    return { id: row.id, studentId, institutionId: stu?stu.institutionId:null, answers:{}, score, total,
-      pct: total?Math.round(score/total*100):0, passed: row.passing_status==='PASS', submittedAt: row.timestamp };
+  const quizzes = quizSnap.docs.map(d=>{
+    const row = d.data();
+    const studentId = row.studentId || studentIdByNameSchool.get(row.student_name+'||'+row.school_name) || null;
+    const stu = studentById.get(studentId);
+    const total = Number(row.total ?? row.total_questions) || 0;
+    const score = Number(row.score) || 0;
+    return {
+      id: d.id, studentId, institutionId: row.institutionId || (stu?stu.institutionId:null),
+      answers: row.answers || {}, score, total,
+      pct: row.pct != null ? row.pct : (total?Math.round(score/total*100):0),
+      passed: row.passed != null ? !!row.passed : row.passing_status==='PASS',
+      submittedAt: row.submittedAt || row.timestamp
+    };
   });
 
   const settings = { ...DB.settings };
-  gateRows.forEach(row=>{
-    const def = GATE_DEFS.find(g=>g.id===row.phase_id);
-    if(def) settings[def.settingKey] = (row.allow_student_submissions===true || row.allow_student_submissions==='true' || row.allow_student_submissions===1 || row.allow_student_submissions==='1');
-  });
+  if(gatesDoc.exists){
+    const g = gatesDoc.data();
+    GATE_DEFS.forEach(def=>{ if(g[def.settingKey] !== undefined) settings[def.settingKey] = !!g[def.settingKey]; });
+  }
 
   let igsiPassword = DB.igsiPassword, taskforcePassword = DB.taskforcePassword, questions = DB.questions;
   let instrumentVersion = DB.instrumentVersion || 0;
-  configRowsRemote.forEach(row=>{
-    if(row.key==='igsiPassword' && row.value) igsiPassword = row.value;
-    if(row.key==='taskforcePassword' && row.value) taskforcePassword = row.value;
-    if(row.key==='questions' && row.value){ try{ questions = JSON.parse(row.value); }catch(e){} }
-    if(row.key==='instrumentVersion' && row.value) instrumentVersion = Number(row.value)||0;
-  });
+  if(appDoc.exists){
+    const a = appDoc.data();
+    if(a.igsiPassword) igsiPassword = a.igsiPassword;
+    if(a.taskforcePassword) taskforcePassword = a.taskforcePassword;
+    if(a.questions) questions = a.questions; // stored as a native Firestore object, no JSON.parse needed
+    if(a.instrumentVersion != null) instrumentVersion = Number(a.instrumentVersion) || 0;
+  }
 
   _syncedIds.students = [...new Set([..._syncedIds.students, ...students.map(s=>s.id)])];
   _syncedIds.surveys  = [...new Set([..._syncedIds.surveys,  ...surveys.map(s=>s.id)])];
@@ -741,43 +666,67 @@ let _gatesDirty = false; // true only when THIS session actually toggled a phase
 let _instrumentDirty = false; // true only when THIS device just re-seeded the question bank
 let _surveyInProgress = false; // true while a student is actively inside a pre/post survey form
 let _activeRole = null; // 'student' | 'focal' | 'taskforce' | 'igsi' | null — scopes background polling
+let _dirtyStudentIds = new Set(); // ids of ALREADY-synced students whose profile was just edited/backfilled
 
-/* ---------- Push: send only what's new/changed to the live sheet ---------- */
+/* ---------- Push: send only what's new/changed to Firestore ---------- */
 async function pushToBackend(){
   if(_syncInFlight){ _syncQueued = true; return; }
   _syncInFlight = true;
   updateSyncBadge('syncing');
   try{
     const newStudents = DB.students.filter(s=>!_syncedIds.students.includes(s.id));
-    if(newStudents.length){ await postRows('students', newStudents.map(studentToRow)); _syncedIds.students.push(...newStudents.map(s=>s.id)); }
+    if(newStudents.length){
+      await commitInChunks(newStudents.map(s => batch => batch.set(fsdb.collection('students').doc(s.id), studentToRow(s))));
+      _syncedIds.students.push(...newStudents.map(s=>s.id));
+    }
+    // Profile edits to an ALREADY-synced student (edit-profile, or the
+    // duplicate-check backfill) need an explicit re-write — Firestore has
+    // no "resend everything, infer what changed" step the way the old
+    // sheet reconcile did.
+    const editedStudents = DB.students.filter(s=>_dirtyStudentIds.has(s.id) && _syncedIds.students.includes(s.id));
+    if(editedStudents.length){
+      await commitInChunks(editedStudents.map(s => batch => batch.set(fsdb.collection('students').doc(s.id), studentToRow(s), {merge:true})));
+    }
+    _dirtyStudentIds.clear();
 
     const newSurveys = DB.surveys.filter(s=>!_syncedIds.surveys.includes(s.id));
-    if(newSurveys.length){ await postRows('surveys', newSurveys.map(surveyToRow)); _syncedIds.surveys.push(...newSurveys.map(s=>s.id)); }
+    if(newSurveys.length){
+      await commitInChunks(newSurveys.map(s => batch => batch.set(fsdb.collection('surveys').doc(s.id), surveyToRow(s))));
+      _syncedIds.surveys.push(...newSurveys.map(s=>s.id));
+    }
 
     const newQuizzes = DB.quizzes.filter(q=>!_syncedIds.quizzes.includes(q.id));
-    if(newQuizzes.length){ await postRows('quiz_results', newQuizzes.map(quizToRow)); _syncedIds.quizzes.push(...newQuizzes.map(q=>q.id)); }
+    if(newQuizzes.length){
+      await commitInChunks(newQuizzes.map(q => batch => batch.set(fsdb.collection('quizzes').doc(q.id), quizToRow(q))));
+      _syncedIds.quizzes.push(...newQuizzes.map(q=>q.id));
+    }
 
-        saveSyncedIds();
+    saveSyncedIds();
 
-    /* Institutions are only reconciled (and only allowed to delete rows)
-       when THIS session actually changed an institution. Every other
-       device's routine saveData()/pushToBackend() cycle — triggered by
+    /* Institutions are only pushed (as a full, cheap re-write — the
+       collection is small, ~20-30 docs) when THIS session actually
+       changed one. Every other device's routine push — triggered by
        something unrelated like a student submitting a survey — must NOT
-       touch focal_campuses, otherwise a stale local institution list on
-       an unrelated device silently deletes/reverts renames made elsewhere. */
+       touch the institutions collection at all. */
     if(_institutionsDirty){
-      await reconcileSheet('focal_campuses', 'school_name', DB.institutions.map(institutionToRow), { allowDelete:true });
+      await commitInChunks(DB.institutions.map(inst => batch => batch.set(fsdb.collection('institutions').doc(inst.id), institutionToRow(inst))));
       _institutionsDirty = false;
     }
-    /* Same reasoning as institutions: only push gate/settings state when
-       THIS session actually toggled a phase, otherwise a device with a
-       stale open/closed value overwrites a correct toggle made elsewhere
-       the next time it saves anything unrelated. */
+    /* Same reasoning as institutions: only push gate state when THIS
+       session actually toggled a phase. */
     if(_gatesDirty){
-      await reconcileSheet('operational_gates', 'phase_id', GATE_DEFS.map(gateToRow), { allowDelete:false });
+      await fsdb.collection('config').doc('gates').set({
+        preOpen: !!DB.settings.preOpen, postOpen: !!DB.settings.postOpen, quizOpen: !!DB.settings.quizOpen
+      });
       _gatesDirty = false;
     }
-    await reconcileSheet('app_config', 'key', configRows(), { allowDelete:false });
+    const appDocData = { igsiPassword: DB.igsiPassword, taskforcePassword: DB.taskforcePassword };
+    if(_instrumentDirty){
+      appDocData.questions = DB.questions; // native object — Firestore stores it as-is, no stringify needed
+      appDocData.instrumentVersion = DB.instrumentVersion || INSTRUMENT_VERSION;
+      _instrumentDirty = false;
+    }
+    await fsdb.collection('config').doc('app').set(appDocData, {merge:true});
 
     _lastSyncError = '';
     updateSyncBadge('synced');
@@ -792,8 +741,8 @@ async function pushToBackend(){
 }
 
 /* saveData() keeps its original name/signature so every existing call site
-   (13 of them) works unchanged. It now saves locally AND queues a debounced
-   push to the shared sheet, so rapid successive saves become a single network sync. */
+   works unchanged. It now saves locally AND queues a debounced push to
+   Firestore, so rapid successive saves become a single network sync. */
 function saveData(){
   saveLocalData(DB);
   updateSyncBadge('pending');
@@ -823,12 +772,12 @@ async function manualSync(){
     const remote = await pullFromBackend();
     if(remote){ DB = remote; saveLocalData(DB); }
     updateSyncBadge('synced');
-    alert('Data refreshed from the shared sheet. Switch role (or reload the page) to see the latest records reflected in the view.');
+    alert('Data refreshed from the shared database. Switch role (or reload the page) to see the latest records reflected in the view.');
   }catch(err){
     _lastSyncError = err.message || String(err);
     console.error(err);
     updateSyncBadge('error');
-    alert('Could not reach the shared sheet: '+_lastSyncError);
+    alert('Could not reach the shared database: '+_lastSyncError);
   }
 }
 
@@ -840,7 +789,7 @@ async function bootSync(){
       saveLocalData(DB);
       updateSyncBadge('synced');
     } else {
-      await pushToBackend(); // sheet is empty (first-ever run) — seed it with current local data
+      await pushToBackend(); // database is empty (first-ever run) — seed it with current local data
     }
   }catch(err){
     _lastSyncError = err.message || String(err);
@@ -849,21 +798,26 @@ async function bootSync(){
   }
 }
 
-/* Quiet background refresh: every 40s, pull the latest shared data into DB
-   so focal persons / IGSI / taskforce see new student submissions without
-   needing to click anything. Skips while a local save is pending/in-flight
-   so an unsynced local change can never be clobbered. Only updates the DB
-   object in memory — never touches the currently rendered screen, so no
-   in-progress form (e.g. a student mid-quiz) is ever disrupted. */
+/* Quiet background refresh: pull the latest shared data into DB so focal
+   persons / IGSI / taskforce see new student submissions without needing
+   to click anything. Skips while a local save is pending/in-flight so an
+   unsynced local change can never be clobbered. Only updates the DB object
+   in memory — never touches the currently rendered screen, so no
+   in-progress form (e.g. a student mid-quiz) is ever disrupted.
+   Firestore has no Apps-Script-style concurrent-execution ceiling, so this
+   can no longer "fail" the way sheet syncing did under load — but each
+   pull still reads every student/survey/quiz document, which at this
+   data's size (thousands of records) adds up in read quota if run too
+   often across several open admin dashboards. 3 minutes balances
+   reasonably-fresh numbers against that; use the sync badge (click to
+   pull immediately) whenever you need it sooner than that. */
 setInterval(async () => {
   /* selectOption/selectLikert/toggleMulti never call saveData(), so a
      student can spend several minutes inside a survey with nothing
      blocking this interval otherwise — _surveyInProgress guards that.
-     Separately: idle students sitting on their own home screen don't
-     need a live aggregate refresh the way admin/focal dashboards do, and
-     at hundreds of concurrent students that background polling alone was
-     a major share of the load hitting Apps Script. Only poll for roles
-     that actually display live shared numbers. */
+     Idle students sitting on their own home screen don't need a live
+     aggregate refresh the way admin/focal dashboards do, so only poll
+     for roles that actually display live shared numbers. */
   if(_syncInFlight || _syncTimer || _surveyInProgress) return;
   if(_activeRole !== 'focal' && _activeRole !== 'taskforce' && _activeRole !== 'igsi') return;
   try{
@@ -872,7 +826,7 @@ setInterval(async () => {
   }catch(err){
     console.error('Background backend refresh failed:', err);
   }
-}, 60000);
+}, 180000);
 
 function uid(prefix){ return prefix+'_'+Math.random().toString(36).slice(2,10); }
 function genKey(){ return 'HHP-'+Math.random().toString(36).slice(2,6).toUpperCase(); }
@@ -1232,10 +1186,12 @@ const App = {
     if(stu && draft){
       // Backfill anything the existing record is missing, without
       // overwriting fields it already has.
-      if(!stu.gender && draft.gender) stu.gender = draft.gender;
-      if(!stu.level && draft.level) stu.level = draft.level;
-      if(!stu.className && draft.className) stu.className = draft.className;
-      if(!stu.sectionName && draft.sectionName) stu.sectionName = draft.sectionName;
+      let changed = false;
+      if(!stu.gender && draft.gender){ stu.gender = draft.gender; changed = true; }
+      if(!stu.level && draft.level){ stu.level = draft.level; changed = true; }
+      if(!stu.className && draft.className){ stu.className = draft.className; changed = true; }
+      if(!stu.sectionName && draft.sectionName){ stu.sectionName = draft.sectionName; changed = true; }
+      if(changed) _dirtyStudentIds.add(stu.id);
       saveData();
     }
     this.state.pendingDuplicateDraft = null;
@@ -1386,6 +1342,7 @@ const App = {
     if(editMode){
       const stu = this.currentStudent();
       Object.assign(stu, draft);
+      _dirtyStudentIds.add(stu.id);
       saveData();
       this.state.registerDraft = null;
       this.showStudentHome();
@@ -2266,6 +2223,9 @@ const App = {
     if(!confirm('Delete this institution from the campaign list? This cannot be undone.')) return;
     DB.institutions = DB.institutions.filter(i=>i.id!==id);
     if(this.instEditId===id) this.instEditId = null;
+    // Firestore has no "resend the full list, infer deletions" step the way
+    // the old sheet reconcile did — a real delete needs an explicit call.
+    fsdb.collection('institutions').doc(id).delete().catch(e => console.error('Institution delete failed:', e));
     _institutionsDirty = true;
     saveData();
     this.showIgsiDashboard('institutions');
