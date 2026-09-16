@@ -340,12 +340,12 @@ const STORE_KEY = 'hhp_v2';
    Project Settings -> General -> "Your apps" -> Web app config.
    projectId/authDomain are already filled in from the migration. */
 const firebaseConfig = {
-  apiKey: "AIzaSyDjlC5SRQpG53y_vFTmNtOCZHRNS5L4sRA",
+  apiKey: "PASTE_YOUR_API_KEY_HERE",
   authDomain: "hhp-student-dashboard.firebaseapp.com",
   projectId: "hhp-student-dashboard",
   storageBucket: "hhp-student-dashboard.appspot.com",
-  messagingSenderId: "425383538173",
-  appId: "1:425383538173:web:760be8264e84f4ca18bd94"
+  messagingSenderId: "PASTE_YOUR_SENDER_ID_HERE",
+  appId: "PASTE_YOUR_APP_ID_HERE"
 };
 firebase.initializeApp(firebaseConfig);
 const fsdb = firebase.firestore();
@@ -569,6 +569,83 @@ function institutionToRow(inst){
 }
 
 /* ---------- Pull: rebuild DB from Firestore ---------- */
+/* ---------- Core pull: institutions + gates + config only ----------
+   Everyone needs this at boot regardless of role — the registration
+   dropdown, phase-gate checks, and the question bank all come from here.
+   Deliberately does NOT touch students/surveys/quizzes: those collections
+   are thousands of documents and reading them for every idle visitor is
+   what actually exhausted the daily read quota at this campaign's scale.
+   Returns a PARTIAL shape (no students/surveys/quizzes/keys) — callers
+   must merge this in with Object.assign(DB, core), never DB = core,
+   or they'll wipe out whatever's already cached locally. */
+async function pullCoreFromBackend(){
+  const [instSnap, gatesDoc, appDoc] = await Promise.all([
+    fsdb.collection('institutions').get(),
+    fsdb.collection('config').doc('gates').get(),
+    fsdb.collection('config').doc('app').get()
+  ]);
+  _lastPullAt = Date.now();
+  if(instSnap.empty && !gatesDoc.exists && !appDoc.exists) return null;
+
+  const institutions = instSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  const settings = { ...DB.settings };
+  if(gatesDoc.exists){
+    const g = gatesDoc.data();
+    GATE_DEFS.forEach(def=>{ if(g[def.settingKey] !== undefined) settings[def.settingKey] = !!g[def.settingKey]; });
+  }
+
+  let igsiPassword = DB.igsiPassword, taskforcePassword = DB.taskforcePassword, questions = DB.questions;
+  let instrumentVersion = DB.instrumentVersion || 0;
+  if(appDoc.exists){
+    const a = appDoc.data();
+    if(a.igsiPassword) igsiPassword = a.igsiPassword;
+    if(a.taskforcePassword) taskforcePassword = a.taskforcePassword;
+    if(a.questions) questions = a.questions;
+    if(a.instrumentVersion != null) instrumentVersion = Number(a.instrumentVersion) || 0;
+  }
+
+  return { institutions, settings, igsiPassword, taskforcePassword, questions, instrumentVersion };
+}
+
+/* ---------- One returning student's own history ----------
+   Bounded to exactly one student's records (typically 0-2 documents),
+   regardless of how large the campaign grows. Used instead of a full
+   pull whenever a student resumes (same-device session restore, or the
+   duplicate-check "yes, that's me" path), so showStudentHome() can
+   correctly show pre/post/quiz completion status without ever reading
+   the other thousands of students' records. */
+async function loadOwnStudentRecords(studentId){
+  try{
+    const [surveySnap, quizSnap] = await Promise.all([
+      fsdb.collection('surveys').where('studentId','==',studentId).get(),
+      fsdb.collection('quizzes').where('studentId','==',studentId).get()
+    ]);
+    const existingSurveyIds = new Set(DB.surveys.map(s=>s.id));
+    surveySnap.docs.forEach(d=>{
+      if(existingSurveyIds.has(d.id)) return;
+      const row = d.data();
+      DB.surveys.push({ id:d.id, studentId: row.studentId, institutionId: row.institutionId, phase: row.phase || row.assessment_type, answers: row.answers || {}, submittedAt: row.submittedAt || row.timestamp });
+    });
+    const existingQuizIds = new Set(DB.quizzes.map(q=>q.id));
+    quizSnap.docs.forEach(d=>{
+      if(existingQuizIds.has(d.id)) return;
+      const row = d.data();
+      const total = Number(row.total ?? row.total_questions) || 0;
+      const score = Number(row.score) || 0;
+      DB.quizzes.push({
+        id:d.id, studentId: row.studentId, institutionId: row.institutionId, answers: row.answers || {}, score, total,
+        pct: row.pct != null ? row.pct : (total?Math.round(score/total*100):0),
+        passed: row.passed != null ? !!row.passed : row.passing_status==='PASS',
+        submittedAt: row.submittedAt || row.timestamp
+      });
+    });
+    saveLocalData(DB);
+  }catch(e){
+    console.error("Could not load this student's own survey/quiz history:", e);
+  }
+}
+
 async function pullFromBackend(){
   const [instSnap, studentSnap, surveySnap, quizSnap, gatesDoc, appDoc] = await Promise.all([
     fsdb.collection('institutions').get(),
@@ -667,6 +744,7 @@ let _instrumentDirty = false; // true only when THIS device just re-seeded the q
 let _surveyInProgress = false; // true while a student is actively inside a pre/post survey form
 let _activeRole = null; // 'student' | 'focal' | 'taskforce' | 'igsi' | null — scopes background polling
 let _dirtyStudentIds = new Set(); // ids of ALREADY-synced students whose profile was just edited/backfilled
+let _fullDataLoaded = false; // true once this session has pulled the full students/surveys/quizzes collections (admin/focal roles only)
 
 /* ---------- Push: send only what's new/changed to Firestore ---------- */
 async function pushToBackend(){
@@ -769,8 +847,18 @@ function updateSyncBadge(state){
 async function manualSync(){
   updateSyncBadge('syncing');
   try{
-    const remote = await pullFromBackend();
-    if(remote){ DB = remote; saveLocalData(DB); }
+    // Only re-read the full (thousands-of-documents) collections for
+    // admin/focal roles that actually display aggregate numbers — a
+    // student clicking the sync badge should only ever trigger the cheap
+    // core pull plus their own scoped records.
+    if(_activeRole === 'focal' || _activeRole === 'taskforce' || _activeRole === 'igsi'){
+      const remote = await pullFromBackend();
+      if(remote){ DB = remote; saveLocalData(DB); _fullDataLoaded = true; }
+    } else {
+      const core = await pullCoreFromBackend();
+      if(core){ Object.assign(DB, core); saveLocalData(DB); }
+      if(App.state.studentId) await loadOwnStudentRecords(App.state.studentId);
+    }
     updateSyncBadge('synced');
     alert('Data refreshed from the shared database. Switch role (or reload the page) to see the latest records reflected in the view.');
   }catch(err){
@@ -783,13 +871,17 @@ async function manualSync(){
 
 async function bootSync(){
   try{
-    const remote = await pullFromBackend();
-    if(remote){
-      DB = remote;
+    const core = await pullCoreFromBackend();
+    if(core){
+      // Partial merge only — institutions/settings/passwords/questions.
+      // Whatever students/surveys/quizzes are already cached locally in
+      // this browser (e.g. from a prior registration on this device)
+      // stay exactly as they are; nothing here overwrites them.
+      Object.assign(DB, core);
       saveLocalData(DB);
       updateSyncBadge('synced');
     } else {
-      await pushToBackend(); // database is empty (first-ever run) — seed it with current local data
+      await pushToBackend(); // database is completely empty (first-ever run) — seed it with current local data
     }
   }catch(err){
     _lastSyncError = err.message || String(err);
@@ -822,7 +914,7 @@ setInterval(async () => {
   if(_activeRole !== 'focal' && _activeRole !== 'taskforce' && _activeRole !== 'igsi') return;
   try{
     const remote = await pullFromBackend();
-    if(remote){ DB = remote; saveLocalData(DB); updateSyncBadge('synced'); }
+    if(remote){ DB = remote; saveLocalData(DB); updateSyncBadge('synced'); _fullDataLoaded = true; }
   }catch(err){
     console.error('Background backend refresh failed:', err);
   }
@@ -1092,6 +1184,7 @@ const App = {
   logout(){
     this.state.role=null; this.state.focalInstitutionId=null; this.state.studentId=null; this.state.registerDraft=null;
     sessionStorage.removeItem('hhp_student_id');
+    _fullDataLoaded = false; // force a fresh full pull next time an admin role logs back in, rather than trusting data that may now be stale
     this.setRoleIndicator(null);
     this.showLanding();
   },
@@ -1124,7 +1217,7 @@ const App = {
 
   selectRole(role){
     if(role==='student'){
-      if(this.state.studentId && DB.students.find(s=>s.id===this.state.studentId)) this.showStudentHome();
+      if(this.state.studentId && DB.students.find(s=>s.id===this.state.studentId)) this.enterStudentSession(this.state.studentId);
       else this.showStudentRegister();
     } else if(role==='focal'){ this.showFocalLogin(); }
     else if(role==='taskforce'){ this.showTaskforceLogin(); }
@@ -1132,6 +1225,30 @@ const App = {
   },
 
   backToLanding(){ this.showLanding(); },
+
+  /* Full pull (institutions+students+surveys+quizzes) only happens once
+     per admin session, right when a role is entered — not at page boot,
+     and not on every subsequent tab switch within the same dashboard. */
+  async ensureFullDataLoaded(){
+    if(_fullDataLoaded) return;
+    try{
+      const remote = await pullFromBackend();
+      if(remote){ DB = remote; saveLocalData(DB); }
+      _fullDataLoaded = true;
+    }catch(e){
+      console.error('Full data load failed:', e);
+      // proceed anyway with whatever's cached locally rather than block
+      // the admin from seeing anything at all
+    }
+  },
+  /* A returning student only ever needs their OWN survey/quiz history,
+     not the other thousands of students' records. */
+  async enterStudentSession(studentId){
+    this.state.studentId = studentId;
+    sessionStorage.setItem('hhp_student_id', studentId);
+    await loadOwnStudentRecords(studentId);
+    this.showStudentHome();
+  },
 
   /* Same-form duplicate detection: matches on institution + normalized full
      name. Class is used as a tie-breaker only when BOTH records have one —
@@ -1149,6 +1266,24 @@ const App = {
       if(existingClass && draftClass && existingClass !== draftClass) return false;
       return true;
     });
+  },
+  /* Scoped to ONE institution's roster (typically tens to low hundreds of
+     students) instead of a full pull of every student in the campaign.
+     Bounded and cheap regardless of how large the whole campaign grows. */
+  async findLikelyExistingStudentScoped(draft){
+    try{
+      const snap = await fsdb.collection('students').where('institutionId', '==', draft.institutionId).get();
+      const existingIds = new Set(DB.students.map(s=>s.id));
+      snap.docs.forEach(d=>{
+        if(existingIds.has(d.id)) return;
+        DB.students.push({ id: d.id, ...d.data() });
+      });
+    }catch(e){
+      console.error('Duplicate-check query failed, falling back to locally cached data:', e);
+    }
+    const match = this.findLikelyExistingStudent(draft);
+    if(match) await loadOwnStudentRecords(match.id); // so the "already completed pre-assessment on X" messaging is accurate
+    return match;
   },
   showPossibleDuplicateConfirm(match, draft){
     this.setRoleIndicator('Student Enrollment');
@@ -1197,10 +1332,10 @@ const App = {
     this.state.pendingDuplicateDraft = null;
     this.state.registerDraft = null;
     if(stu){
-      this.state.studentId = stu.id;
-      sessionStorage.setItem('hhp_student_id', stu.id);
+      this.enterStudentSession(stu.id);
+    } else {
+      this.showStudentHome();
     }
-    this.showStudentHome();
   },
   forceNewFromDuplicateCheck(){
     this.state.confirmedNewDespiteMatch = true;
@@ -1350,18 +1485,12 @@ const App = {
     }
     if(!this.state.confirmedNewDespiteMatch){
       const btn = document.getElementById('regSubmitBtn');
-      // Throttled: skip the fresh pull if one just happened moments ago
-      // (e.g. several students submitting within the same minute), so a
-      // classroom burst doesn't stack up full syncs on top of each other.
-      if(Date.now() - _lastPullAt > 15000){
-        if(btn){ btn.disabled = true; btn.textContent = 'Checking existing registrations…'; }
-        try{
-          const remote = await pullFromBackend();
-          if(remote){ DB = remote; saveLocalData(DB); }
-        }catch(e){ /* proceed against whatever's cached locally rather than block registration entirely */ }
-        if(btn){ btn.disabled = false; btn.textContent = 'Confirm & Save Changes'; }
-      }
-      const possibleMatch = this.findLikelyExistingStudent(draft);
+      // Scoped to just this one institution's roster (not a full pull of
+      // every student in the campaign) — cheap and bounded regardless of
+      // how large the whole campaign grows, so no throttling needed here.
+      if(btn){ btn.disabled = true; btn.textContent = 'Checking existing registrations…'; }
+      const possibleMatch = await this.findLikelyExistingStudentScoped(draft);
+      if(btn){ btn.disabled = false; btn.textContent = 'Confirm & Save Changes'; }
       if(possibleMatch){ this.showPossibleDuplicateConfirm(possibleMatch, draft); return; }
     }
     this.state.confirmedNewDespiteMatch = false;
@@ -1821,7 +1950,7 @@ const App = {
       </div>
     `);
   },
-  submitFocalLogin(){
+  async submitFocalLogin(){
     const instId = document.getElementById('focalInstitution').value;
     const key = document.getElementById('focalKey').value.trim().toUpperCase();
     const inst = DB.institutions.find(i=>i.id===instId);
@@ -1830,6 +1959,7 @@ const App = {
       return;
     }
     this.state.focalInstitutionId = instId;
+    await this.ensureFullDataLoaded();
     this.showFocalDashboard();
   },
   showFocalDashboard(){
@@ -1903,12 +2033,13 @@ const App = {
       </div>
     `);
   },
-  submitTaskforceLogin(){
+  async submitTaskforceLogin(){
     const pw = document.getElementById('tfPassword').value;
     if(pw !== DB.taskforcePassword){
       document.getElementById('tfError').innerHTML = `<div class="error-box" style="border-radius:10px;">Security key parameters invalid.</div>`;
       return;
     }
+    await this.ensureFullDataLoaded();
     this.showTaskforceDashboard();
   },
   showTaskforceDashboard(){
@@ -1976,12 +2107,13 @@ const App = {
       </div>
     `);
   },
-  submitIgsiLogin(){
+  async submitIgsiLogin(){
     const pw = document.getElementById('igsiPassword').value;
     if(pw !== DB.igsiPassword){
       document.getElementById('igsiError').innerHTML = `<div class="error-box" style="border-radius:10px;">Security handshake rejected.</div>`;
       return;
     }
+    await this.ensureFullDataLoaded();
     this.showIgsiDashboard('overview');
   },
   igsiTab: 'overview',
