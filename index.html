@@ -415,6 +415,7 @@ function defaultData(){
     students: [],
     surveys: [],
     quizzes: [],
+    summaries: [],
     igsiPassword: 'igsi-2026',
     taskforcePassword: 'taskforce-2026',
     settings: { preOpen: true, postOpen: true, quizOpen: true }
@@ -425,7 +426,11 @@ function defaultData(){
 function loadLocalData(){
   const raw = localStorage.getItem(STORE_KEY);
   if(!raw){ const d = defaultData(); localStorage.setItem(STORE_KEY, JSON.stringify(d)); return d; }
-  try{ return JSON.parse(raw); } catch(e){ return defaultData(); }
+  try{
+    const d = JSON.parse(raw);
+    if(!d.summaries) d.summaries = []; // upgrade path for a browser that cached data before this feature existed
+    return d;
+  } catch(e){ return defaultData(); }
 }
 function saveLocalData(db){ localStorage.setItem(STORE_KEY, JSON.stringify(db)); }
 let DB = loadLocalData();
@@ -564,7 +569,7 @@ function institutionToRow(inst){
   return {
     name: inst.name, type: inst.type || 'school', key: inst.key || null,
     abbr: inst.abbr || '', archived: !!inst.archived,
-    total_enrolled: DB.students.filter(s=>s.institutionId===inst.id).length // snapshot only, app always recomputes live
+    total_enrolled: summaryFor(inst.id).registered // snapshot only, app always recomputes live
   };
 }
 
@@ -615,6 +620,129 @@ async function pullCoreFromBackend(){
    duplicate-check "yes, that's me" path), so showStudentHome() can
    correctly show pre/post/quiz completion status without ever reading
    the other thousands of students' records. */
+/* Shared doc -> in-memory-shape parsers, reused by every place that reads
+   raw survey/quiz documents (full pull, own-records, focal-scoped, and
+   the summary backfill) so this logic exists in exactly one place. */
+function parseSurveyDoc(d){
+  const row = d.data();
+  return { id:d.id, studentId: row.studentId, institutionId: row.institutionId, phase: row.phase || row.assessment_type, answers: row.answers || {}, submittedAt: row.submittedAt || row.timestamp };
+}
+function parseQuizDoc(d){
+  const row = d.data();
+  const total = Number(row.total ?? row.total_questions) || 0;
+  const score = Number(row.score) || 0;
+  return {
+    id:d.id, studentId: row.studentId, institutionId: row.institutionId, answers: row.answers || {}, score, total,
+    pct: row.pct != null ? row.pct : (total?Math.round(score/total*100):0),
+    passed: row.passed != null ? !!row.passed : row.passing_status==='PASS',
+    submittedAt: row.submittedAt || row.timestamp
+  };
+}
+
+/* ---------- Summary pull: institutions + summaries + gates + config ----------
+   What the main dashboard (Overview / Taskforce / stat tiles / Section 1
+   & 2 charts) actually refreshes on: ~21 tiny summary documents plus the
+   ~21 institution documents, instead of every raw student/survey/quiz
+   record. This is what makes the routine refresh cheap regardless of how
+   large the campaign grows. */
+async function pullSummariesFromBackend(){
+  const [instSnap, summarySnap, gatesDoc, appDoc] = await Promise.all([
+    fsdb.collection('institutions').get(),
+    fsdb.collection('summaries').get(),
+    fsdb.collection('config').doc('gates').get(),
+    fsdb.collection('config').doc('app').get()
+  ]);
+  _lastPullAt = Date.now();
+  if(instSnap.empty && !gatesDoc.exists && !appDoc.exists) return null;
+
+  const institutions = instSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const summaries = summarySnap.docs.map(d => ({ id: d.id, ...normalizeSummary(d.data()) }));
+
+  const settings = { ...DB.settings };
+  if(gatesDoc.exists){
+    const g = gatesDoc.data();
+    GATE_DEFS.forEach(def=>{ if(g[def.settingKey] !== undefined) settings[def.settingKey] = !!g[def.settingKey]; });
+  }
+  let igsiPassword = DB.igsiPassword, taskforcePassword = DB.taskforcePassword, questions = DB.questions;
+  let instrumentVersion = DB.instrumentVersion || 0;
+  if(appDoc.exists){
+    const a = appDoc.data();
+    if(a.igsiPassword) igsiPassword = a.igsiPassword;
+    if(a.taskforcePassword) taskforcePassword = a.taskforcePassword;
+    if(a.questions) questions = a.questions;
+    if(a.instrumentVersion != null) instrumentVersion = Number(a.instrumentVersion) || 0;
+  }
+
+  return { institutions, summaries, settings, igsiPassword, taskforcePassword, questions, instrumentVersion };
+}
+/* Defaults every field so summary-consuming code never has to
+   null-check — an institution with no summary doc yet (brand new, or
+   never backfilled) just reads as all zeros. */
+function normalizeSummary(s){
+  s = s || {};
+  return {
+    registered: s.registered||0, preCount: s.preCount||0, postCount: s.postCount||0,
+    quizAttempts: s.quizAttempts||0, quizPassed: s.quizPassed||0,
+    genderCounts: { Female: s.genderCounts?.Female||0, Male: s.genderCounts?.Male||0, Other: s.genderCounts?.Other||0 },
+    quizGenderCounts: { Female: s.quizGenderCounts?.Female||0, Male: s.quizGenderCounts?.Male||0, Other: s.quizGenderCounts?.Other||0 },
+    registeredByDay: s.registeredByDay||{}, preByDay: s.preByDay||{}, postByDay: s.postByDay||{}
+  };
+}
+function summaryFor(instId){
+  const s = DB.summaries && DB.summaries.find(x=>x.id===instId);
+  return s || { id: instId, ...normalizeSummary(null) };
+}
+
+/* ---------- One-time / on-demand backfill or reconciliation ----------
+   Recomputes every institution's summary document from a full read of
+   the raw data, the same aggregation logic already used elsewhere in
+   this file. Used once to seed summaries the first time this feature is
+   deployed against an existing campaign, and available any time after
+   that if summaries are ever suspected to have drifted from the raw
+   data (e.g. a write that failed partway through). Expensive by design
+   (reads everything) — that cost is fine for a rare, explicit action,
+   which is exactly why it isn't part of the routine refresh path. */
+async function recomputeAllSummaries(){
+  const remote = await pullFromBackend();
+  const students = remote ? remote.students : DB.students;
+  const surveys = remote ? remote.surveys : DB.surveys;
+  const quizzes = remote ? remote.quizzes : DB.quizzes;
+  const institutions = remote ? remote.institutions : DB.institutions;
+
+  const writeFns = institutions.map(inst => batch => {
+    const instStudents = students.filter(s=>s.institutionId===inst.id);
+    const ids = instStudents.map(s=>s.id);
+    const gCounts = { Female:0, Male:0, Other:0 };
+    const regByDay = {};
+    instStudents.forEach(s=>{
+      if(s.gender && gCounts[s.gender]!==undefined) gCounts[s.gender]++;
+      const day = dateOnly(s.createdAt);
+      if(day) regByDay[day] = (regByDay[day]||0) + 1;
+    });
+    const preByDay = {}, postByDay = {};
+    let preCount = 0, postCount = 0;
+    surveys.filter(s=>ids.includes(s.studentId)).forEach(s=>{
+      const day = dateOnly(s.submittedAt);
+      if(s.phase==='pre'){ preCount++; if(day) preByDay[day]=(preByDay[day]||0)+1; }
+      else if(s.phase==='post'){ postCount++; if(day) postByDay[day]=(postByDay[day]||0)+1; }
+    });
+    const instQuizzes = quizzes.filter(q=>ids.includes(q.studentId));
+    const quizGCounts = { Female:0, Male:0, Other:0 };
+    instQuizzes.forEach(q=>{
+      const stu = instStudents.find(s=>s.id===q.studentId);
+      if(stu && stu.gender && quizGCounts[stu.gender]!==undefined) quizGCounts[stu.gender]++;
+    });
+    batch.set(fsdb.collection('summaries').doc(inst.id), {
+      registered: instStudents.length, preCount, postCount,
+      quizAttempts: instQuizzes.length, quizPassed: instQuizzes.filter(q=>q.passed).length,
+      genderCounts: gCounts, quizGenderCounts: quizGCounts,
+      registeredByDay: regByDay, preByDay, postByDay
+    });
+  });
+  await commitInChunks(writeFns);
+  return institutions.length;
+}
+
 async function loadOwnStudentRecords(studentId){
   try{
     const [surveySnap, quizSnap] = await Promise.all([
@@ -622,24 +750,9 @@ async function loadOwnStudentRecords(studentId){
       fsdb.collection('quizzes').where('studentId','==',studentId).get()
     ]);
     const existingSurveyIds = new Set(DB.surveys.map(s=>s.id));
-    surveySnap.docs.forEach(d=>{
-      if(existingSurveyIds.has(d.id)) return;
-      const row = d.data();
-      DB.surveys.push({ id:d.id, studentId: row.studentId, institutionId: row.institutionId, phase: row.phase || row.assessment_type, answers: row.answers || {}, submittedAt: row.submittedAt || row.timestamp });
-    });
+    surveySnap.docs.forEach(d=>{ if(!existingSurveyIds.has(d.id)) DB.surveys.push(parseSurveyDoc(d)); });
     const existingQuizIds = new Set(DB.quizzes.map(q=>q.id));
-    quizSnap.docs.forEach(d=>{
-      if(existingQuizIds.has(d.id)) return;
-      const row = d.data();
-      const total = Number(row.total ?? row.total_questions) || 0;
-      const score = Number(row.score) || 0;
-      DB.quizzes.push({
-        id:d.id, studentId: row.studentId, institutionId: row.institutionId, answers: row.answers || {}, score, total,
-        pct: row.pct != null ? row.pct : (total?Math.round(score/total*100):0),
-        passed: row.passed != null ? !!row.passed : row.passing_status==='PASS',
-        submittedAt: row.submittedAt || row.timestamp
-      });
-    });
+    quizSnap.docs.forEach(d=>{ if(!existingQuizIds.has(d.id)) DB.quizzes.push(parseQuizDoc(d)); });
     saveLocalData(DB);
   }catch(e){
     console.error("Could not load this student's own survey/quiz history:", e);
@@ -744,9 +857,54 @@ let _instrumentDirty = false; // true only when THIS device just re-seeded the q
 let _surveyInProgress = false; // true while a student is actively inside a pre/post survey form
 let _activeRole = null; // 'student' | 'focal' | 'taskforce' | 'igsi' | null — scopes background polling
 let _dirtyStudentIds = new Set(); // ids of ALREADY-synced students whose profile was just edited/backfilled
-let _fullDataLoaded = false; // true once this session has pulled the full students/surveys/quizzes collections (admin/focal roles only)
+let _summariesLoaded = false; // true once this session has pulled the ~21-doc summaries (taskforce/igsi Overview)
+let _fullRawDataLoaded = false; // true once this session has pulled the full raw students/surveys/quizzes (Analysis Engine, drill-downs, Export, PDF report — on demand only)
 
 /* ---------- Push: send only what's new/changed to Firestore ---------- */
+/* ---------- Per-institution summary documents ----------
+   One small document per institution (summaries/{institutionId}) holding
+   running totals, kept in sync via atomic Firestore increments issued
+   alongside each new student/survey/quiz write below. This is what lets
+   the main dashboard refresh read ~21 tiny documents instead of every
+   raw student/survey/quiz record — see pullSummariesFromBackend(). */
+function studentSummaryIncrements(s){
+  const day = dateOnly(s.createdAt);
+  const ops = { registered: 1 };
+  if(day) ops['registeredByDay.'+day] = 1;
+  if(s.gender && GENDERS.includes(s.gender)) ops['genderCounts.'+s.gender] = 1;
+  return ops;
+}
+function surveySummaryIncrements(s){
+  const day = dateOnly(s.submittedAt);
+  const field = s.phase==='pre' ? 'preCount' : 'postCount';
+  const dayField = s.phase==='pre' ? 'preByDay' : 'postByDay';
+  const ops = { [field]: 1 };
+  if(day) ops[dayField+'.'+day] = 1;
+  return ops;
+}
+function quizSummaryIncrements(q){
+  const ops = { quizAttempts: 1 };
+  if(q.passed) ops.quizPassed = 1;
+  // Simplification, noted plainly rather than silently: this counts every
+  // quiz ATTEMPT by gender, not distinct students, so a student who
+  // retakes the quiz is counted again. Retakes are expected to be rare
+  // and this only feeds an illustrative proportion chart, not a
+  // certification-critical number — exact distinct-student tracking would
+  // need materially more bookkeeping for little practical gain here.
+  const stu = DB.students.find(x=>x.id===q.studentId);
+  if(stu && stu.gender && GENDERS.includes(stu.gender)) ops['quizGenderCounts.'+stu.gender] = 1;
+  return ops;
+}
+function queueSummaryIncrement(batch, institutionId, opsMap){
+  if(!institutionId) return;
+  const update = {};
+  Object.keys(opsMap).forEach(k => { update[k] = firebase.firestore.FieldValue.increment(opsMap[k]); });
+  // set(...,{merge:true}) with increment sentinels both creates the
+  // summary doc on its first-ever write and increments existing fields —
+  // no separate "create the doc" step needed anywhere.
+  batch.set(fsdb.collection('summaries').doc(institutionId), update, {merge:true});
+}
+
 async function pushToBackend(){
   if(_syncInFlight){ _syncQueued = true; return; }
   _syncInFlight = true;
@@ -754,7 +912,10 @@ async function pushToBackend(){
   try{
     const newStudents = DB.students.filter(s=>!_syncedIds.students.includes(s.id));
     if(newStudents.length){
-      await commitInChunks(newStudents.map(s => batch => batch.set(fsdb.collection('students').doc(s.id), studentToRow(s))));
+      await commitInChunks(newStudents.map(s => batch => {
+        batch.set(fsdb.collection('students').doc(s.id), studentToRow(s));
+        queueSummaryIncrement(batch, s.institutionId, studentSummaryIncrements(s));
+      }));
       _syncedIds.students.push(...newStudents.map(s=>s.id));
     }
     // Profile edits to an ALREADY-synced student (edit-profile, or the
@@ -769,13 +930,19 @@ async function pushToBackend(){
 
     const newSurveys = DB.surveys.filter(s=>!_syncedIds.surveys.includes(s.id));
     if(newSurveys.length){
-      await commitInChunks(newSurveys.map(s => batch => batch.set(fsdb.collection('surveys').doc(s.id), surveyToRow(s))));
+      await commitInChunks(newSurveys.map(s => batch => {
+        batch.set(fsdb.collection('surveys').doc(s.id), surveyToRow(s));
+        queueSummaryIncrement(batch, s.institutionId, surveySummaryIncrements(s));
+      }));
       _syncedIds.surveys.push(...newSurveys.map(s=>s.id));
     }
 
     const newQuizzes = DB.quizzes.filter(q=>!_syncedIds.quizzes.includes(q.id));
     if(newQuizzes.length){
-      await commitInChunks(newQuizzes.map(q => batch => batch.set(fsdb.collection('quizzes').doc(q.id), quizToRow(q))));
+      await commitInChunks(newQuizzes.map(q => batch => {
+        batch.set(fsdb.collection('quizzes').doc(q.id), quizToRow(q));
+        queueSummaryIncrement(batch, q.institutionId, quizSummaryIncrements(q));
+      }));
       _syncedIds.quizzes.push(...newQuizzes.map(q=>q.id));
     }
 
@@ -847,13 +1014,15 @@ function updateSyncBadge(state){
 async function manualSync(){
   updateSyncBadge('syncing');
   try{
-    // Only re-read the full (thousands-of-documents) collections for
-    // admin/focal roles that actually display aggregate numbers — a
-    // student clicking the sync badge should only ever trigger the cheap
-    // core pull plus their own scoped records.
-    if(_activeRole === 'focal' || _activeRole === 'taskforce' || _activeRole === 'igsi'){
-      const remote = await pullFromBackend();
-      if(remote){ DB = remote; saveLocalData(DB); _fullDataLoaded = true; }
+    // Admin roles refresh from the cheap summary documents; focal
+    // refreshes just its own institution's data; a student gets the core
+    // pull plus their own scoped records. None of these read the full
+    // raw student/survey/quiz collections.
+    if(_activeRole === 'taskforce' || _activeRole === 'igsi'){
+      const remote = await pullSummariesFromBackend();
+      if(remote){ Object.assign(DB, remote); saveLocalData(DB); _summariesLoaded = true; }
+    } else if(_activeRole === 'focal'){
+      await App.ensureFocalDataLoaded(App.state.focalInstitutionId, true);
     } else {
       const core = await pullCoreFromBackend();
       if(core){ Object.assign(DB, core); saveLocalData(DB); }
@@ -890,35 +1059,53 @@ async function bootSync(){
   }
 }
 
-/* Quiet background refresh: pull the latest shared data into DB so focal
-   persons / IGSI / taskforce see new student submissions without needing
-   to click anything. Skips while a local save is pending/in-flight so an
-   unsynced local change can never be clobbered. Only updates the DB object
-   in memory — never touches the currently rendered screen, so no
-   in-progress form (e.g. a student mid-quiz) is ever disrupted.
-   Firestore has no Apps-Script-style concurrent-execution ceiling, so this
-   can no longer "fail" the way sheet syncing did under load — but each
-   pull still reads every student/survey/quiz document, which at this
-   data's size (thousands of records) adds up in read quota if run too
-   often across several open admin dashboards. 3 minutes balances
-   reasonably-fresh numbers against that; use the sync badge (click to
-   pull immediately) whenever you need it sooner than that. */
-setInterval(async () => {
-  /* selectOption/selectLikert/toggleMulti never call saveData(), so a
-     student can spend several minutes inside a survey with nothing
-     blocking this interval otherwise — _surveyInProgress guards that.
-     Idle students sitting on their own home screen don't need a live
-     aggregate refresh the way admin/focal dashboards do, so only poll
-     for roles that actually display live shared numbers. */
-  if(_syncInFlight || _syncTimer || _surveyInProgress) return;
-  if(_activeRole !== 'focal' && _activeRole !== 'taskforce' && _activeRole !== 'igsi') return;
-  try{
-    const remote = await pullFromBackend();
-    if(remote){ DB = remote; saveLocalData(DB); updateSyncBadge('synced'); _fullDataLoaded = true; }
-  }catch(err){
-    console.error('Background backend refresh failed:', err);
-  }
-}, 180000);
+/* ---------- Inactivity handling ----------
+   Replaces the fixed-interval background poll entirely. Nothing refreshes
+   or logs anyone out while there's real interaction happening — both
+   timers only start counting once activity actually stops, and every
+   click/keypress/touch resets them back to zero.
+   - After 7 minutes of pure inactivity: admin roles (focal/taskforce/igsi)
+     get ONE silent refresh, so numbers aren't badly stale if the screen
+     is still being looked at without anyone clicking anything. Students
+     never trigger this — they only ever needed the question bank once,
+     not a live aggregate refresh.
+   - After 15 minutes of pure inactivity, for EVERY role including
+     students: log out automatically. This is also what stops a
+     browser tab left open overnight (with nobody there) from silently
+     polling and racking up reads for hours with no one watching. */
+const IDLE_REFRESH_MS = 7 * 60 * 1000;
+const IDLE_LOGOUT_MS = 15 * 60 * 1000;
+let _idleRefreshTimer = null, _idleLogoutTimer = null;
+
+function resetIdleTimers(){
+  if(_idleRefreshTimer) clearTimeout(_idleRefreshTimer);
+  if(_idleLogoutTimer) clearTimeout(_idleLogoutTimer);
+
+  _idleRefreshTimer = setTimeout(async () => {
+    if(_syncInFlight || _syncTimer) return;
+    try{
+      if(_activeRole === 'taskforce' || _activeRole === 'igsi'){
+        const remote = await pullSummariesFromBackend();
+        if(remote){ Object.assign(DB, remote); saveLocalData(DB); updateSyncBadge('synced'); _summariesLoaded = true; }
+      } else if(_activeRole === 'focal'){
+        await App.ensureFocalDataLoaded(App.state.focalInstitutionId, true);
+        updateSyncBadge('synced');
+      }
+    }catch(err){
+      console.error('Idle refresh failed:', err);
+    }
+  }, IDLE_REFRESH_MS);
+
+  _idleLogoutTimer = setTimeout(() => {
+    // A student mid-survey who's genuinely idle still resets this timer
+    // via each answer click, so this only fires on real abandonment —
+    // but skip it anyway while a survey is in progress, as a safety
+    // margin against losing someone's in-progress answers mid-thought.
+    if(_activeRole && !_surveyInProgress) App.logout();
+  }, IDLE_LOGOUT_MS);
+}
+['click','keydown','touchstart'].forEach(evt => document.addEventListener(evt, resetIdleTimers, {passive:true}));
+resetIdleTimers();
 
 function uid(prefix){ return prefix+'_'+Math.random().toString(36).slice(2,10); }
 function genKey(){ return 'HHP-'+Math.random().toString(36).slice(2,6).toUpperCase(); }
@@ -1184,7 +1371,11 @@ const App = {
   logout(){
     this.state.role=null; this.state.focalInstitutionId=null; this.state.studentId=null; this.state.registerDraft=null;
     sessionStorage.removeItem('hhp_student_id');
-    _fullDataLoaded = false; // force a fresh full pull next time an admin role logs back in, rather than trusting data that may now be stale
+    // Force fresh data next time any admin role logs back in, rather than
+    // trusting something that may now be stale.
+    _summariesLoaded = false;
+    _fullRawDataLoaded = false;
+    this._focalDataLoadedFor = null;
     this.setRoleIndicator(null);
     this.showLanding();
   },
@@ -1229,16 +1420,58 @@ const App = {
   /* Full pull (institutions+students+surveys+quizzes) only happens once
      per admin session, right when a role is entered — not at page boot,
      and not on every subsequent tab switch within the same dashboard. */
-  async ensureFullDataLoaded(){
-    if(_fullDataLoaded) return;
+  /* Used at taskforce/igsi login: the cheap ~21-summary-doc refresh that
+     feeds the Overview dashboard, Section 1/2 charts, and stat tiles. */
+  async ensureSummariesLoaded(){
+    if(_summariesLoaded) return;
+    try{
+      const remote = await pullSummariesFromBackend();
+      if(remote){ Object.assign(DB, remote); saveLocalData(DB); }
+      _summariesLoaded = true;
+    }catch(e){
+      console.error('Summary data load failed:', e);
+      // proceed anyway with whatever's cached locally rather than block
+      // the admin from seeing anything at all
+    }
+  },
+  /* Used on-demand only — Analysis Engine tab, Export, Generate Report,
+     and any chart drill-down — never automatically. These need real
+     per-student/per-question detail that a summary document can't give,
+     so they're deliberately kept out of the routine refresh path and
+     only cost a full read the moment someone actually asks for detail. */
+  async ensureFullRawDataLoaded(){
+    if(_fullRawDataLoaded) return;
     try{
       const remote = await pullFromBackend();
       if(remote){ DB = remote; saveLocalData(DB); }
-      _fullDataLoaded = true;
+      _fullRawDataLoaded = true;
     }catch(e){
-      console.error('Full data load failed:', e);
-      // proceed anyway with whatever's cached locally rather than block
-      // the admin from seeing anything at all
+      console.error('Full raw data load failed:', e);
+    }
+  },
+  /* Focal dashboards only ever need their OWN institution's data, so this
+     queries students/surveys/quizzes scoped to just that institutionId —
+     bounded by that one campus's size, never the whole campaign. Pass
+     force=true (used by the idle refresh / manual sync) to re-fetch even
+     if already loaded this session. */
+  async ensureFocalDataLoaded(instId, force){
+    if(!force && this._focalDataLoadedFor === instId) return;
+    try{
+      const [studentSnap, surveySnap, quizSnap] = await Promise.all([
+        fsdb.collection('students').where('institutionId','==',instId).get(),
+        fsdb.collection('surveys').where('institutionId','==',instId).get(),
+        fsdb.collection('quizzes').where('institutionId','==',instId).get()
+      ]);
+      const existingStudentIds = new Set(DB.students.map(s=>s.id));
+      studentSnap.docs.forEach(d=>{ if(!existingStudentIds.has(d.id)) DB.students.push({ id: d.id, ...d.data() }); });
+      const existingSurveyIds = new Set(DB.surveys.map(s=>s.id));
+      surveySnap.docs.forEach(d=>{ if(!existingSurveyIds.has(d.id)) DB.surveys.push(parseSurveyDoc(d)); });
+      const existingQuizIds = new Set(DB.quizzes.map(q=>q.id));
+      quizSnap.docs.forEach(d=>{ if(!existingQuizIds.has(d.id)) DB.quizzes.push(parseQuizDoc(d)); });
+      this._focalDataLoadedFor = instId;
+      saveLocalData(DB);
+    }catch(e){
+      console.error('Focal data load failed:', e);
     }
   },
   /* A returning student only ever needs their OWN survey/quiz history,
@@ -1834,7 +2067,8 @@ const App = {
   },
 
   /* ---------------- CHART DRILL-DOWN POPUPS ---------------- */
-  drillCampus(idx){
+  async drillCampus(idx){
+    await this.ensureFullRawDataLoaded();
     const inst = DB.institutions[idx];
     if(!inst) return;
     const students = DB.students.filter(s=>s.institutionId===inst.id);
@@ -1850,7 +2084,8 @@ const App = {
       [passCount, failCount], [C_PASS, C_FAIL]));
     drillChart('drillRight', 'dr', drillDoughnutCfg(GENDERS, gCounts, GENDER_COLORS));
   },
-  drillPassFail(segIdx, instId){
+  async drillPassFail(segIdx, instId){
+    await this.ensureFullRawDataLoaded();
     const passed = segIdx === 0;
     const segLabel = passed ? 'Passed (≥70%)' : 'Not Passed';
     const all = DB.quizzes.filter(q => !instId || q.institutionId===instId);
@@ -1867,7 +2102,8 @@ const App = {
       [segLabel, 'Rest of Attempts'], [seg.length, all.length - seg.length],
       [passed ? C_PASS : C_FAIL, C_REST]));
   },
-  drillParticipation(idx, instId){
+  async drillParticipation(idx, instId){
+    await this.ensureFullRawDataLoaded();
     const metricNames = ['Registered','Pre-Survey Attempted','Post-Survey Attempted','Quiz Attempted'];
     const metric = metricNames[idx];
     if(!metric) return;
@@ -1890,7 +2126,8 @@ const App = {
       [segCount, Math.max(scopeStudents.length - segCount, 0)],
       [C_NAVY, C_REST]));
   },
-  drillScoreDist(idx, instId){
+  async drillScoreDist(idx, instId){
+    await this.ensureFullRawDataLoaded();
     const bands = [['0–39%',0,39],['40–69%',40,69],['70–89% (Pass)',70,89],['90–100% (Pass)',90,100]];
     const band = bands[idx];
     if(!band) return;
@@ -1909,7 +2146,8 @@ const App = {
       [SCORE_BAND_COLORS[idx], C_REST]));
   },
 
-  drillInstituteProfile(idx){
+  async drillInstituteProfile(idx){
+    await this.ensureFullRawDataLoaded();
     const inst = DB.institutions[idx];
     if(!inst) return;
     const students = DB.students.filter(s=>s.institutionId===inst.id);
@@ -1920,7 +2158,8 @@ const App = {
     drillChart('drillLeft', 'dl', drillDoughnutCfg(GENDERS, gCounts, GENDER_COLORS));
     drillChart('drillRight', 'dr', drillBarCfg(cls.labels, cls.counts, cls.labels.map((_,i)=>SDG_COLORS[i%SDG_COLORS.length])));
   },
-  drillTimelineDay(day){
+  async drillTimelineDay(day){
+    await this.ensureFullRawDataLoaded();
     const reg = newRegistrationsOnDayByInstitution(day);
     const regCount = DB.students.filter(s=>dateOnly(s.createdAt)===day).length;
     const preCount = DB.surveys.filter(s=>s.phase==='pre' && dateOnly(s.submittedAt)===day).length;
@@ -1959,7 +2198,7 @@ const App = {
       return;
     }
     this.state.focalInstitutionId = instId;
-    await this.ensureFullDataLoaded();
+    await this.ensureFocalDataLoaded(instId);
     this.showFocalDashboard();
   },
   showFocalDashboard(){
@@ -2039,7 +2278,7 @@ const App = {
       document.getElementById('tfError').innerHTML = `<div class="error-box" style="border-radius:10px;">Security key parameters invalid.</div>`;
       return;
     }
-    await this.ensureFullDataLoaded();
+    await this.ensureSummariesLoaded();
     this.showTaskforceDashboard();
   },
   showTaskforceDashboard(){
@@ -2083,7 +2322,7 @@ const App = {
         <h3>Campus Registry Metrics Table</h3>
         <div class="table-wrap">
           <table><thead><tr><th>Institution Description</th><th>Framework Format</th><th>Registered Population</th><th>Quiz Interactions</th><th>Certification Yield</th></tr></thead>
-          <tbody>${DB.institutions.map(i=>{const s=institutionStats(i.id); return `<tr><td>${escapeHtml(i.name)}</td><td>${i.type.toUpperCase()}</td><td>${s.registered}</td><td>${s.quizAttempts}</td><td>${s.passRate}%</td></tr>`;}).join('')}</tbody></table>
+          <tbody>${DB.institutions.map(i=>{const s=institutionStatsFromSummary(i.id); return `<tr><td>${escapeHtml(i.name)}</td><td>${i.type.toUpperCase()}</td><td>${s.registered}</td><td>${s.quizAttempts}</td><td>${s.passRate}%</td></tr>`;}).join('')}</tbody></table>
         </div>
       </div>
     `);
@@ -2113,12 +2352,18 @@ const App = {
       document.getElementById('igsiError').innerHTML = `<div class="error-box" style="border-radius:10px;">Security handshake rejected.</div>`;
       return;
     }
-    await this.ensureFullDataLoaded();
+    await this.ensureSummariesLoaded();
     this.showIgsiDashboard('overview');
   },
   igsiTab: 'overview',
-  showIgsiDashboard(tab){
+  async showIgsiDashboard(tab){
     this.igsiTab = tab || this.igsiTab;
+    // Analysis Engine and Export need real per-student/per-question detail
+    // that summary documents can't give — loaded on demand, right here,
+    // rather than as part of every login or idle refresh.
+    if(this.igsiTab==='analysis' || this.igsiTab==='export'){
+      await this.ensureFullRawDataLoaded();
+    }
     _activeRole = 'igsi';
     this.setRoleIndicator('IGSI Campaign Operations Board');
     const g = globalStats();
@@ -2194,7 +2439,7 @@ const App = {
           <div class="table-wrap">
             <table><thead><tr><th>Campus Context String</th><th>Abbr.</th><th>Track Type</th><th>Key Token Pair</th><th>Status</th><th>System Actions</th></tr></thead>
             <tbody>${DB.institutions.map(i=>{
-              const regCount = DB.students.filter(s=>s.institutionId===i.id).length;
+              const regCount = summaryFor(i.id).registered;
               return `
               <tr${i.archived?' style="opacity:.55;"':''}>
                 <td><b>${escapeHtml(i.name)}</b>${regCount?`<div class="muted" style="font-size:11.5px;">${regCount} student(s) registered</div>`:''}</td>
@@ -2225,6 +2470,11 @@ const App = {
           ${settingsRow('preOpen','Baseline Pre-Assessment Processing Matrix')}
           ${settingsRow('postOpen','Post-Campaign Assessment Evaluation')}
           ${settingsRow('quizOpen','SDG Champion Knowledge Assessment Engine')}
+        </div>
+        <div class="card" style="max-width:640px;">
+          <h3>Recompute Campus Summaries</h3>
+          <p class="muted">The Overview dashboard, Section 1/2 charts, and Taskforce metrics read from a small per-campus summary document instead of the full student/survey/quiz records, kept in sync automatically as new data comes in. Run this once to seed those summaries from your existing data (needed the first time this goes live against an already-running campaign), or any time you want to reconcile them against the raw records from scratch. This reads everything once, so it's a bigger operation than routine use — expected, since it's a rare, explicit action rather than something that runs automatically.</p>
+          <button class="btn btn-gold" id="recomputeSummariesBtn" onclick="App.runRecomputeSummaries()">Recompute All Summaries</button>
         </div>`;
     } else if(this.igsiTab==='export'){
       content.innerHTML = `
@@ -2296,9 +2546,23 @@ const App = {
     this.showIgsiDashboard('questions');
   },
 
-  generateAnalysisReport(buttonId){
+  async runRecomputeSummaries(){
+    const btn = document.getElementById('recomputeSummariesBtn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Recomputing…'; }
+    try{
+      const count = await recomputeAllSummaries();
+      _summariesLoaded = false; // force this device to re-pull the fresh summaries next time it needs them
+      alert(`Recomputed summaries for ${count} institution(s).`);
+    }catch(e){
+      alert('Recompute failed: ' + e.message);
+    }
+    if(btn){ btn.disabled = false; btn.textContent = 'Recompute All Summaries'; }
+  },
+  async generateAnalysisReport(buttonId){
     const btn = document.getElementById(buttonId || 'genReportBtn');
-    if(btn){ btn.disabled = true; btn.textContent = 'Generating Report…'; }
+    if(btn){ btn.disabled = true; btn.textContent = 'Loading full dataset…'; }
+    await this.ensureFullRawDataLoaded();
+    if(btn){ btn.textContent = 'Generating Report…'; }
     const done = () => { if(btn){ btn.disabled = false; btn.innerHTML = '⬇ Generate Report (PDF)'; } };
     ensureChartJs(() => {
       buildAnalysisReportPdf().then(done).catch(e => { alert('Report generation failed: ' + e.message); done(); });
@@ -2347,7 +2611,7 @@ const App = {
     this.showIgsiDashboard('institutions');
   },
    deleteInstitution(id){
-    const regCount = DB.students.filter(s=>s.institutionId===id).length;
+    const regCount = summaryFor(id).registered;
     if(regCount > 0){
       alert(`Cannot delete this institution: ${regCount} student(s) are registered under it. Their records would be orphaned.`);
       return;
@@ -2672,6 +2936,9 @@ function studentRows(instId){
    DATA CALCULATION METRICS ENGINE
    ============================================================ */
 function institutionStats(instId){
+  // Raw-data version: used by Focal dashboard (after a scoped pull) and by
+  // drill-downs (after an on-demand full raw-data pull) — needs actual
+  // per-student records, not the aggregate summary.
   const students = DB.students.filter(s=>s.institutionId===instId);
   const studentIds = students.map(s=>s.id);
   const preCount = DB.surveys.filter(s=>studentIds.includes(s.studentId) && s.phase==='pre').length;
@@ -2685,25 +2952,30 @@ function institutionStats(instId){
     passRate: pct(passed, quizzes.length)
   };
 }
-function globalStats(){
-  const quizzes = DB.quizzes;
-  const passed = quizzes.filter(q=>q.passed).length;
-  const activeInstitutions = new Set(DB.students.map(s=>s.institutionId)).size;
+/* Same shape as institutionStats() above, but read from the cheap
+   summary document instead of raw per-student records — used by the
+   Taskforce/IGSI institution metrics table, which only ever has
+   summaries loaded, not the full raw dataset. */
+function institutionStatsFromSummary(instId){
+  const s = summaryFor(instId);
   return {
-    students: DB.students.length,
-    activeInstitutions,
-    quizAttempts: quizzes.length,
-    passRate: pct(passed, quizzes.length)
+    registered: s.registered, preCount: s.preCount, postCount: s.postCount,
+    quizAttempts: s.quizAttempts, passRate: pct(s.quizPassed, s.quizAttempts)
   };
+}
+function globalStats(){
+  let students=0, quizAttempts=0, quizPassed=0, activeInstitutions=0;
+  (DB.summaries||[]).forEach(s=>{
+    students += s.registered; quizAttempts += s.quizAttempts; quizPassed += s.quizPassed;
+    if(s.registered>0) activeInstitutions++;
+  });
+  return { students, activeInstitutions, quizAttempts, passRate: pct(quizPassed, quizAttempts) };
 }
 /* ---------- Section 1 (Pre/Post progress) + Section 2 (Quiz) dashboard data ---------- */
 function assessmentProgressByInstitution(){
   return DB.institutions.map(i=>{
-    const students = DB.students.filter(s=>s.institutionId===i.id);
-    const ids = students.map(s=>s.id);
-    const pre = new Set(DB.surveys.filter(s=>s.phase==='pre' && ids.includes(s.studentId)).map(s=>s.studentId)).size;
-    const post = new Set(DB.surveys.filter(s=>s.phase==='post' && ids.includes(s.studentId)).map(s=>s.studentId)).size;
-    return { id:i.id, name:i.name, abbr:i.abbr, registered: students.length, pre, post };
+    const s = summaryFor(i.id);
+    return { id:i.id, name:i.name, abbr:i.abbr, registered: s.registered, pre: s.preCount, post: s.postCount };
   });
 }
 function classBreakdown(students){
@@ -2715,30 +2987,29 @@ function classBreakdown(students){
   return { labels:[...map.keys()], counts:[...map.values()] };
 }
 function quizGenderProportion(){
-  const takerIds = new Set(DB.quizzes.map(q=>q.studentId));
-  const takers = DB.students.filter(s=>takerIds.has(s.id));
-  return GENDERS.map(g=>takers.filter(s=>s.gender===g).length);
+  const totals = { Female:0, Male:0, Other:0 };
+  (DB.summaries||[]).forEach(s=>{ GENDERS.forEach(g => totals[g] += (s.quizGenderCounts && s.quizGenderCounts[g]) || 0); });
+  return GENDERS.map(g=>totals[g]);
 }
 function quizStatsGlobal(){
-  const institutesWithQuiz = new Set(DB.quizzes.map(q=>q.institutionId)).size;
+  const institutesWithQuiz = (DB.summaries||[]).filter(s=>s.quizAttempts>0).length;
   return { institutesWithQuiz, totalInstitutes: DB.institutions.length };
 }
 /* Cumulative-over-time data for Section 1's timeline chart: how many
    students had registered / completed pre / completed post, as of each
-   calendar day that saw any activity. */
+   calendar day that saw any activity. Built entirely from each summary
+   document's per-day deltas — no raw student/survey records needed. */
 function dateOnly(iso){ return (iso||'').slice(0,10); }
 function assessmentTimelineData(){
-  const regDates  = DB.students.map(s=>dateOnly(s.createdAt)).filter(Boolean);
-  const preDates  = DB.surveys.filter(s=>s.phase==='pre').map(s=>dateOnly(s.submittedAt)).filter(Boolean);
-  const postDates = DB.surveys.filter(s=>s.phase==='post').map(s=>dateOnly(s.submittedAt)).filter(Boolean);
-  const allDates = [...new Set([...regDates, ...preDates, ...postDates])].sort();
-  const countUpTo = (dates, day) => dates.filter(d=>d<=day).length;
-  return {
-    labels: allDates,
-    registered: allDates.map(d=>countUpTo(regDates, d)),
-    pre: allDates.map(d=>countUpTo(preDates, d)),
-    post: allDates.map(d=>countUpTo(postDates, d))
-  };
+  const regByDay = {}, preByDay = {}, postByDay = {};
+  (DB.summaries||[]).forEach(s=>{
+    Object.entries(s.registeredByDay||{}).forEach(([d,n])=>{ regByDay[d]=(regByDay[d]||0)+n; });
+    Object.entries(s.preByDay||{}).forEach(([d,n])=>{ preByDay[d]=(preByDay[d]||0)+n; });
+    Object.entries(s.postByDay||{}).forEach(([d,n])=>{ postByDay[d]=(postByDay[d]||0)+n; });
+  });
+  const allDates = [...new Set([...Object.keys(regByDay), ...Object.keys(preByDay), ...Object.keys(postByDay)])].sort();
+  const cumulative = byDay => { let running = 0; return allDates.map(d => { running += (byDay[d]||0); return running; }); };
+  return { labels: allDates, registered: cumulative(regByDay), pre: cumulative(preByDay), post: cumulative(postByDay) };
 }
 /* For the timeline drill-down: which institutes contributed new
    registrations on one specific day, and how that day split across
@@ -3153,7 +3424,7 @@ function makeQuizByInstChart(canvasId, chartKey, onBarClick){
   const c = document.getElementById(canvasId);
   if(!c) return;
   const labels = DB.institutions.map(i=>institutionLabel(i));
-  const counts = DB.institutions.map(i=>DB.quizzes.filter(q=>q.institutionId===i.id).length);
+  const counts = DB.institutions.map(i=>summaryFor(i.id).quizAttempts);
   App.charts[chartKey] = new Chart(c, {
     type:'bar',
     data:{ labels, datasets:[{ label:'Quiz Attempts', data:counts, backgroundColor:instColors(), borderRadius:5 }]},
