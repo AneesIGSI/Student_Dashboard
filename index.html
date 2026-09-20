@@ -2551,8 +2551,16 @@ const App = {
     if(btn){ btn.disabled = true; btn.textContent = 'Recomputing…'; }
     try{
       const count = await recomputeAllSummaries();
-      _summariesLoaded = false; // force this device to re-pull the fresh summaries next time it needs them
+      // Immediately pull the fresh summaries and refresh the screen —
+      // otherwise the currently-open Overview keeps showing whatever
+      // (stale) numbers were already in memory before this ran.
+      const remote = await pullSummariesFromBackend();
+      if(remote){ Object.assign(DB, remote); saveLocalData(DB); }
+      _summariesLoaded = true;
+      if(btn){ btn.disabled = false; btn.textContent = 'Recompute All Summaries'; }
       alert(`Recomputed summaries for ${count} institution(s).`);
+      this.showIgsiDashboard('overview');
+      return;
     }catch(e){
       alert('Recompute failed: ' + e.message);
     }
