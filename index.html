@@ -749,10 +749,18 @@ async function loadOwnStudentRecords(studentId){
       fsdb.collection('surveys').where('studentId','==',studentId).get(),
       fsdb.collection('quizzes').where('studentId','==',studentId).get()
     ]);
+    // Mark these as already-synced immediately — same reasoning as the
+    // scoped-loader fixes above: these came FROM Firestore, so a later
+    // push on this device must never treat them as new.
     const existingSurveyIds = new Set(DB.surveys.map(s=>s.id));
-    surveySnap.docs.forEach(d=>{ if(!existingSurveyIds.has(d.id)) DB.surveys.push(parseSurveyDoc(d)); });
+    const newlySeenSurveyIds = [];
+    surveySnap.docs.forEach(d=>{ if(!existingSurveyIds.has(d.id)){ DB.surveys.push(parseSurveyDoc(d)); newlySeenSurveyIds.push(d.id); } });
     const existingQuizIds = new Set(DB.quizzes.map(q=>q.id));
-    quizSnap.docs.forEach(d=>{ if(!existingQuizIds.has(d.id)) DB.quizzes.push(parseQuizDoc(d)); });
+    const newlySeenQuizIds = [];
+    quizSnap.docs.forEach(d=>{ if(!existingQuizIds.has(d.id)){ DB.quizzes.push(parseQuizDoc(d)); newlySeenQuizIds.push(d.id); } });
+    if(newlySeenSurveyIds.length) _syncedIds.surveys.push(...newlySeenSurveyIds);
+    if(newlySeenQuizIds.length) _syncedIds.quizzes.push(...newlySeenQuizIds);
+    if(newlySeenSurveyIds.length || newlySeenQuizIds.length) saveSyncedIds();
     saveLocalData(DB);
   }catch(e){
     console.error("Could not load this student's own survey/quiz history:", e);
@@ -1443,7 +1451,11 @@ const App = {
     if(_fullRawDataLoaded) return;
     try{
       const remote = await pullFromBackend();
-      if(remote){ DB = remote; saveLocalData(DB); }
+      // Partial merge, not DB = remote: pullFromBackend()'s result has no
+      // "summaries" field, so a full replace here would silently wipe
+      // DB.summaries out of memory the moment Analysis Engine or Export
+      // is opened, showing 0 on Overview until the next full login.
+      if(remote){ Object.assign(DB, remote); saveLocalData(DB); }
       _fullRawDataLoaded = true;
     }catch(e){
       console.error('Full raw data load failed:', e);
@@ -1462,12 +1474,25 @@ const App = {
         fsdb.collection('surveys').where('institutionId','==',instId).get(),
         fsdb.collection('quizzes').where('institutionId','==',instId).get()
       ]);
+      // These are documents we just READ from Firestore, not new local
+      // records — mark them synced immediately. Otherwise, the next time
+      // this device pushes anything at all, pushToBackend() has no way to
+      // tell "already exists remotely" apart from "genuinely new," and
+      // re-writes (and re-increments the institution's summary counter
+      // for) every student/survey/quiz merged in here.
       const existingStudentIds = new Set(DB.students.map(s=>s.id));
-      studentSnap.docs.forEach(d=>{ if(!existingStudentIds.has(d.id)) DB.students.push({ id: d.id, ...d.data() }); });
+      const newlySeenStudentIds = [];
+      studentSnap.docs.forEach(d=>{ if(!existingStudentIds.has(d.id)){ DB.students.push({ id: d.id, ...d.data() }); newlySeenStudentIds.push(d.id); } });
       const existingSurveyIds = new Set(DB.surveys.map(s=>s.id));
-      surveySnap.docs.forEach(d=>{ if(!existingSurveyIds.has(d.id)) DB.surveys.push(parseSurveyDoc(d)); });
+      const newlySeenSurveyIds = [];
+      surveySnap.docs.forEach(d=>{ if(!existingSurveyIds.has(d.id)){ DB.surveys.push(parseSurveyDoc(d)); newlySeenSurveyIds.push(d.id); } });
       const existingQuizIds = new Set(DB.quizzes.map(q=>q.id));
-      quizSnap.docs.forEach(d=>{ if(!existingQuizIds.has(d.id)) DB.quizzes.push(parseQuizDoc(d)); });
+      const newlySeenQuizIds = [];
+      quizSnap.docs.forEach(d=>{ if(!existingQuizIds.has(d.id)){ DB.quizzes.push(parseQuizDoc(d)); newlySeenQuizIds.push(d.id); } });
+      _syncedIds.students.push(...newlySeenStudentIds);
+      _syncedIds.surveys.push(...newlySeenSurveyIds);
+      _syncedIds.quizzes.push(...newlySeenQuizIds);
+      saveSyncedIds();
       this._focalDataLoadedFor = instId;
       saveLocalData(DB);
     }catch(e){
@@ -1507,10 +1532,21 @@ const App = {
     try{
       const snap = await fsdb.collection('students').where('institutionId', '==', draft.institutionId).get();
       const existingIds = new Set(DB.students.map(s=>s.id));
+      // Same reasoning as ensureFocalDataLoaded() above: these are
+      // records that already exist in Firestore. Without marking them
+      // synced here, this device's next push would treat this
+      // institution's ENTIRE existing roster as brand new and
+      // re-increment its summary counter for every one of them — this
+      // was the actual cause of summary counts drifting upward (an
+      // institution showing more registered students than really exist),
+      // not a caching or display issue.
+      const newlySeenIds = [];
       snap.docs.forEach(d=>{
         if(existingIds.has(d.id)) return;
         DB.students.push({ id: d.id, ...d.data() });
+        newlySeenIds.push(d.id);
       });
+      if(newlySeenIds.length){ _syncedIds.students.push(...newlySeenIds); saveSyncedIds(); }
     }catch(e){
       console.error('Duplicate-check query failed, falling back to locally cached data:', e);
     }
