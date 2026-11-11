@@ -11,6 +11,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <style>
 :root{
   --forest:#185D35;
@@ -3832,6 +3833,534 @@ function renderAssessmentQuizSections(){
   if(l) l.src = LOGO_SDGTF;
   if(r) r.src = LOGO_IGSI;
 })();
+
+/* ============================================================
+   SECURITY LAYER  (added 2026-11 — no-backend / Firebase Spark version)
+   ------------------------------------------------------------
+   - Real Firebase Auth (email + password) logins for IGSI & Taskforce
+   - Access-request + approval workflow: two super-admins approve in-app
+     (either one rejects -> red alert + device block). No emails in code.
+   - Device / IP / OS / model / deviceId logging to Firestore `securityLog`
+   - Decoy admin panel reached by the OLD leaked passwords (logs everything,
+     touches no real data)
+   HONEST LIMITS (see README): nothing in this file is secret — browser code
+   is readable. The real enforcement is the Firestore SECURITY RULES. IP and
+   device fields are best-effort and can be spoofed; device blocking is a
+   deterrent, not a wall; the account block (via rules) is the real lock.
+   ============================================================ */
+let fsauth = null;
+try { fsauth = firebase.auth(); } catch(e){ console.warn('[sec] Firebase Auth is not enabled yet:', e && e.message); }
+try { if(fsauth) fsauth.setPersistence(firebase.auth.Auth.Persistence.SESSION); } catch(e){}
+
+/* OLD leaked passwords = the decoy trap. Set these to the ACTUAL values that
+   leaked. Entering one opens a convincing fake panel and fires a red alert. */
+const LEGACY_TRAP = { igsi: 'igsi-2026', taskforce: 'taskforce-2026' };
+
+const SEC_LOG = 'securityLog', ADMIN_COL = 'admins', BLOCK_COL = 'blockedDevices';
+const APPROVALS_NEEDED = 2; // both super-admins must approve; either reject kills it
+
+/* ---------- device identity (best-effort; a browser cannot read IMEI or a
+   real device name, and every field here can be spoofed) ---------- */
+function deviceId(){
+  let id=null; try{ id=localStorage.getItem('hhp_device_id'); }catch(e){}
+  if(!id){ id='dev_'+Math.random().toString(36).slice(2)+'_'+Date.now().toString(36); try{ localStorage.setItem('hhp_device_id', id); }catch(e){} }
+  return id;
+}
+function parseUA(ua){
+  ua = ua || ''; let os='Unknown', br='Unknown', model='';
+  if(/Windows NT/.test(ua)) os='Windows'; else if(/Android/.test(ua)) os='Android';
+  else if(/iPhone|iPad|iPod/.test(ua)) os='iOS'; else if(/Mac OS X/.test(ua)) os='macOS';
+  else if(/Linux/.test(ua)) os='Linux';
+  if(/Edg\//.test(ua)) br='Edge'; else if(/OPR\/|Opera/.test(ua)) br='Opera';
+  else if(/Chrome\//.test(ua)) br='Chrome'; else if(/Firefox\//.test(ua)) br='Firefox';
+  else if(/Safari\//.test(ua)) br='Safari';
+  const m = ua.match(/Android[^;]*;\s*([^;)]+?)(?:\sBuild|\))/); if(m) model = m[1].trim();
+  return { os, browser: br, model };
+}
+let _ipCache = null;
+async function getIp(){
+  if(_ipCache !== null) return _ipCache;
+  try{
+    const ctl = new AbortController(); const t = setTimeout(()=>ctl.abort(), 3500);
+    const r = await fetch('https://api.ipify.org?format=json', { signal: ctl.signal }); clearTimeout(t);
+    const j = await r.json(); _ipCache = j.ip || '';
+  }catch(e){ _ipCache = ''; }
+  return _ipCache;
+}
+async function collectDevice(){
+  const ua = navigator.userAgent || ''; const p = parseUA(ua);
+  const info = {
+    deviceId: deviceId(), userAgent: ua, os: p.os, browser: p.browser, model: p.model,
+    platform: (navigator.platform || ''), language: (navigator.language || ''),
+    screen: (typeof screen !== 'undefined' ? screen.width+'x'+screen.height : ''),
+    timezone: (function(){ try{ return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; }catch(e){ return ''; } })(),
+    ip: ''
+  };
+  try{
+    if(navigator.userAgentData && navigator.userAgentData.getHighEntropyValues){
+      const h = await navigator.userAgentData.getHighEntropyValues(['model','platform','platformVersion']);
+      if(h.model) info.model = h.model;
+      if(h.platform) info.os = h.platform + (h.platformVersion ? ' '+h.platformVersion : '');
+    }
+  }catch(e){}
+  info.ip = await getIp();
+  return info;
+}
+
+/* Append-only security log. Allowed to fail silently — logging must never
+   break the page or tip off an attacker. */
+async function secLog(type, severity, detail){
+  try{
+    const dev = await collectDevice();
+    const u = (fsauth && fsauth.currentUser) || null;
+    await fsdb.collection(SEC_LOG).add(clean({
+      type: type, severity: severity || 'info', detail: detail || {},
+      uid: u ? u.uid : null, email: u ? u.email : null,
+      device: dev, ip: dev.ip || null,
+      ts: firebase.firestore.FieldValue.serverTimestamp(),
+      tsClient: new Date().toISOString(), ack: false
+    }));
+  }catch(e){ console.warn('[sec] log write failed (allowed):', e && e.message); }
+}
+async function isDeviceBlocked(){
+  try{ const d = await fsdb.collection(BLOCK_COL).doc(deviceId()).get(); return d.exists; }catch(e){ return false; }
+}
+function secToast(msg, ok){
+  let t = document.getElementById('secToast');
+  if(!t){ t = document.createElement('div'); t.id='secToast';
+    t.style.cssText='position:fixed;top:72px;left:50%;transform:translateX(-50%);z-index:400;background:var(--forest-dark);color:#fff;padding:10px 18px;border-radius:999px;font-size:13px;font-weight:600;box-shadow:0 6px 24px rgba(0,0,0,.25);';
+    document.body.appendChild(t); }
+  t.style.background = ok===false ? 'var(--danger)' : 'var(--forest-dark)';
+  t.textContent = msg; t.style.display='block';
+  clearTimeout(t._h); t._h = setTimeout(()=>{ t.style.display='none'; }, 2600);
+}
+
+/* ---------- password policy: >= 9 chars, lower + upper + number + symbol ---------- */
+function pwProblems(pw){
+  const out = [];
+  if((pw||'').length < 9) out.push('at least 9 characters');
+  if(!/[a-z]/.test(pw)) out.push('a lowercase letter');
+  if(!/[A-Z]/.test(pw)) out.push('an uppercase letter');
+  if(!/[0-9]/.test(pw)) out.push('a number');
+  if(!/[^A-Za-z0-9]/.test(pw)) out.push('a symbol');
+  return out;
+}
+
+/* ============================================================
+   AUTH MODULE (real logins + approval workflow)
+   ============================================================ */
+const Auth = {
+  me: null, // {uid,email,role,superAdmin,status}
+  roleLabel(r){ return r==='igsi' ? 'IGSI Coordinator' : 'SDG Taskforce'; },
+  backLink(){ return `<div class="back-link no-print" onclick="App.showLanding()">&larr; Back</div>`; },
+
+  async myAdminDoc(uid){
+    try{ const d = await fsdb.collection(ADMIN_COL).doc(uid).get(); return d.exists ? d.data() : null; }catch(e){ return null; }
+  },
+
+  /* ----- sign-in screen ----- */
+  showStaffLogin(role){
+    App.setRoleIndicator(null);
+    App.el(`
+      ${this.backLink()}
+      <div class="card" style="max-width:460px;margin:0 auto;">
+        <span class="eyebrow">${role==='igsi'?'Central Administrative Director':'Campaign Audit Deck'}</span>
+        <h2>${escapeHtml(this.roleLabel(role))} Sign-In</h2>
+        <div id="authError"></div>
+        <label>Email</label>
+        <input type="text" id="authEmail" placeholder="you@organisation.org" autocomplete="username">
+        <label>Password</label>
+        <input type="password" id="authPw" placeholder="Your password" autocomplete="current-password">
+        <div class="btn-row"><button class="btn btn-gold btn-block" id="authBtn" onclick="Auth.doLogin('${role}')">Sign In</button></div>
+        <p class="field-hint" style="margin-top:14px;">No account yet? <a href="#" onclick="Auth.showSignup('${role}');return false;">Request access</a></p>
+        <p class="field-hint"><a href="#" onclick="Auth.showLegacy('${role}');return false;" style="color:var(--slate);">Returning user — use legacy access key</a></p>
+      </div>
+    `, 'staffLogin');
+  },
+
+  async doLogin(role){
+    const email = (document.getElementById('authEmail').value||'').trim();
+    const pw = document.getElementById('authPw').value||'';
+    const errEl = document.getElementById('authError'), btn = document.getElementById('authBtn');
+    const err = m => { if(errEl) errEl.innerHTML = `<div class="error-box" style="border-radius:10px;">${escapeHtml(m)}</div>`; };
+    if(!fsauth){ err('Logins are not switched on yet. Enable Email/Password sign-in in the Firebase console.'); return; }
+    if(!email || !pw){ err('Enter your email and password.'); return; }
+    if(await isDeviceBlocked()){ secLog('login_from_blocked_device','red',{email,role}); this.showBlocked(); return; }
+    if(btn){ btn.disabled = true; btn.textContent = 'Signing in…'; }
+    try{
+      const cred = await fsauth.signInWithEmailAndPassword(email, pw);
+      await this.routeAfterLogin(cred.user, role);
+    }catch(e){
+      if(btn){ btn.disabled = false; btn.textContent = 'Sign In'; }
+      err('Sign-in failed. Check your email and password.');
+      secLog('login_failed','warn',{email, role, code: e && e.code});
+    }
+  },
+
+  async routeAfterLogin(user, wantRole){
+    const a = await this.myAdminDoc(user.uid);
+    if(!a){
+      secLog('login_no_admin_record','warn',{email:user.email});
+      await this.ensureRequest(user, wantRole || 'igsi');
+      if(fsauth) await fsauth.signOut();
+      this.showAwaiting(); return;
+    }
+    if(a.status === 'rejected'){
+      secLog('login_rejected_account','red',{email:user.email});
+      if(fsauth) await fsauth.signOut();
+      this.showBlocked(); return;
+    }
+    if(a.status !== 'approved'){ if(fsauth) await fsauth.signOut(); this.showAwaiting(); return; }
+    this.me = { uid:user.uid, email:user.email, role:a.role, superAdmin:!!a.superAdmin, status:'approved' };
+    App.me = this.me;
+    secLog('login_ok','info',{email:user.email, role:a.role, superAdmin:!!a.superAdmin});
+    this.mountSuperUi();
+    if(a.role === 'igsi'){ await App.loadPublishedAll(); App.showIgsiDashboard('overview'); }
+    else if(a.role === 'taskforce'){ await App.loadPublishedAll(); App.showTaskforceDashboard(); }
+    else App.showLanding();
+  },
+
+  /* ----- request access (sign up) ----- */
+  showSignup(role){
+    App.el(`
+      ${this.backLink()}
+      <div class="card" style="max-width:480px;margin:0 auto;">
+        <span class="eyebrow">Request Access</span>
+        <h2>${escapeHtml(this.roleLabel(role))} — Request Access</h2>
+        <p class="muted">Your request goes to the two campaign administrators. You cannot sign in until <b>both</b> approve it. If either one rejects it, this device is blocked.</p>
+        <div id="suError"></div>
+        <label>Email</label>
+        <input type="text" id="suEmail" placeholder="you@organisation.org" autocomplete="username">
+        <label>Password</label>
+        <input type="password" id="suPw" placeholder="Create a password" autocomplete="new-password" oninput="Auth.pwHint()">
+        <div id="pwHint" class="field-hint">Needs 9+ characters with a lowercase letter, an uppercase letter, a number and a symbol.</div>
+        <label>Confirm password</label>
+        <input type="password" id="suPw2" placeholder="Re-enter the password" autocomplete="new-password">
+        <div class="btn-row"><button class="btn btn-gold btn-block" id="suBtn" onclick="Auth.doSignup('${role}')">Send access request</button></div>
+      </div>
+    `, 'staffSignup');
+  },
+  pwHint(){
+    const pw = (document.getElementById('suPw')||{}).value || '';
+    const probs = pwProblems(pw), el = document.getElementById('pwHint');
+    if(!el) return;
+    if(!pw){ el.style.color='var(--slate)'; el.textContent='Needs 9+ characters with a lowercase letter, an uppercase letter, a number and a symbol.'; return; }
+    if(probs.length){ el.style.color='var(--danger)'; el.textContent='Still needs: '+probs.join(', ')+'.'; }
+    else { el.style.color='var(--success)'; el.textContent='Password meets the requirements.'; }
+  },
+  async doSignup(role){
+    const email = (document.getElementById('suEmail').value||'').trim();
+    const pw = document.getElementById('suPw').value||'', pw2 = document.getElementById('suPw2').value||'';
+    const errEl = document.getElementById('suError'), btn = document.getElementById('suBtn');
+    const err = m => { if(errEl) errEl.innerHTML = `<div class="error-box" style="border-radius:10px;">${escapeHtml(m)}</div>`; };
+    if(!fsauth){ err('Logins are not switched on yet. Enable Email/Password sign-in in the Firebase console.'); return; }
+    if(!email) return err('Enter your email.');
+    const probs = pwProblems(pw);
+    if(probs.length) return err('Password needs '+probs.join(', ')+'.');
+    if(pw !== pw2) return err('The two passwords do not match.');
+    if(await isDeviceBlocked()){ secLog('signup_from_blocked_device','red',{email,role}); this.showBlocked(); return; }
+    if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
+    try{
+      const cred = await fsauth.createUserWithEmailAndPassword(email, pw);
+      await this.ensureRequest(cred.user, role);
+      await secLog('access_requested','warn',{email, role});
+      await this.notifyApprovers({ email, role });
+      if(fsauth) await fsauth.signOut();
+      this.showAwaiting(true);
+    }catch(e){
+      if(btn){ btn.disabled = false; btn.textContent = 'Send access request'; }
+      err(e && e.code === 'auth/email-already-in-use' ? 'An account with this email already exists. Try signing in instead.' : 'Could not send the request: '+(e && e.message));
+      secLog('signup_failed','warn',{email, role, code: e && e.code});
+    }
+  },
+  async ensureRequest(user, role){
+    const existing = await this.myAdminDoc(user.uid);
+    if(existing) return;
+    const dev = await collectDevice();
+    try{
+      await fsdb.collection(ADMIN_COL).doc(user.uid).set(clean({
+        email: user.email, role: role, status: 'pending', superAdmin: false,
+        approvals: {}, device: dev, requestIp: dev.ip || null,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      }));
+    }catch(e){ console.warn('[sec] could not create access request:', e && e.message); }
+  },
+  /* Hook for email notifications. With no backend we record an in-app alert
+     the two super-admins see in their Access Requests panel. To also email
+     them, wire EmailJS here (its key WILL be visible in the page — see README). */
+  async notifyApprovers(payload){
+    await secLog('access_request','warn', payload);
+    // EMAILJS HOOK (optional, no backend):
+    // try { await emailjs.send('SERVICE_ID','TEMPLATE_ID',payload,'PUBLIC_KEY'); } catch(e){}
+  },
+
+  showAwaiting(justSent){
+    App.el(`
+      <div class="card" style="max-width:520px;margin:60px auto;text-align:center;">
+        <h2>${justSent ? 'Request sent ✅' : 'Awaiting approval'}</h2>
+        <p class="muted">Your access request is waiting for the two campaign administrators to approve it. You will be able to sign in once both have approved. You can close this page meanwhile.</p>
+        <button class="btn btn-outline" onclick="App.showLanding()">Return to start</button>
+      </div>
+    `, 'awaiting');
+  },
+  showBlocked(){
+    App.el(`
+      <div class="card" style="max-width:520px;margin:60px auto;text-align:center;">
+        <h2 style="color:var(--danger);">Access blocked</h2>
+        <p class="muted">This account or device is not permitted to use the administration area. If you believe this is a mistake, contact the campaign administrators.</p>
+        <button class="btn btn-outline" onclick="App.showLanding()">Return to start</button>
+      </div>
+    `, 'blocked');
+  },
+
+  /* ----- legacy key path = the DECOY TRAP ----- */
+  showLegacy(role){
+    App.el(`
+      ${this.backLink()}
+      <div class="card" style="max-width:440px;margin:0 auto;">
+        <span class="eyebrow">Legacy Access</span>
+        <h2>${escapeHtml(this.roleLabel(role))} — Legacy Key</h2>
+        <div id="lgError"></div>
+        <label>Access key</label>
+        <input type="password" id="lgKey" placeholder="Enter your access key">
+        <div class="btn-row"><button class="btn btn-gold btn-block" onclick="Auth.doLegacy('${role}')">Continue</button></div>
+      </div>
+    `, 'legacy');
+  },
+  async doLegacy(role){
+    const key = document.getElementById('lgKey').value || '';
+    if(key && key === LEGACY_TRAP[role]){
+      await secLog('decoy_entry','red',{ role, via:'legacy-key' });
+      Decoy.enter(role);
+      return;
+    }
+    await secLog('legacy_key_failed','red',{ role });
+    const box = document.getElementById('lgError');
+    if(box) box.innerHTML = `<div class="error-box" style="border-radius:10px;">Invalid access key.</div>`;
+  },
+
+  /* ----- super-admin UI: floating button + requests/alerts panel ----- */
+  mountSuperUi(){
+    this.teardownSuperUi();
+    if(!this.me || !this.me.superAdmin) return;
+    const b = document.createElement('div');
+    b.id = 'superBtn'; b.className = 'sync-badge no-print'; b.style.left='16px'; b.style.right='auto';
+    b.style.bottom='56px'; b.style.cursor='pointer';
+    b.innerHTML = `<span class="sync-dot" style="background:var(--danger);"></span><span id="superBtnText">Admin requests & alerts</span>`;
+    b.onclick = () => Auth.showAccessRequests();
+    document.body.appendChild(b);
+    this.refreshSuperBadge();
+  },
+  teardownSuperUi(){ const b = document.getElementById('superBtn'); if(b) b.remove(); },
+  async refreshSuperBadge(){
+    try{
+      const [reqs, alerts] = await Promise.all([
+        fsdb.collection(ADMIN_COL).where('status','==','pending').get(),
+        fsdb.collection(SEC_LOG).where('severity','==','red').where('ack','==',false).get()
+      ]);
+      const t = document.getElementById('superBtnText');
+      if(t) t.textContent = `Requests ${reqs.size} · Alerts ${alerts.size}`;
+    }catch(e){}
+  },
+  async showAccessRequests(){
+    App.setRoleIndicator('Super Administrator');
+    App.el(`<div class="flex-between"><div><span class="eyebrow">Security Console</span><h2>Access Requests &amp; Alerts</h2></div>
+      <button class="btn btn-outline no-print" onclick="Auth.backToMyDashboard()">Back to dashboard</button></div>
+      <div id="arBody"><div class="card"><p class="muted">Loading…</p></div></div>`, 'accessRequests');
+    let reqs = [], alerts = [];
+    try{ reqs = (await fsdb.collection(ADMIN_COL).where('status','==','pending').get()).docs.map(d=>({id:d.id,...d.data()})); }catch(e){}
+    try{ alerts = (await fsdb.collection(SEC_LOG).where('severity','==','red').where('ack','==',false).get()).docs.map(d=>({id:d.id,...d.data()})); }catch(e){}
+    alerts.sort((a,b)=>String(b.tsClient||'').localeCompare(String(a.tsClient||'')));
+    const dev = d => d ? `${escapeHtml(d.os||'?')} · ${escapeHtml(d.browser||'?')}${d.model?' · '+escapeHtml(d.model):''} · IP ${escapeHtml(d.ip||'unknown')} · id ${escapeHtml((d.deviceId||'').slice(0,14))}` : 'no device info';
+    const reqRows = reqs.length ? reqs.map(r=>`<tr>
+        <td><b>${escapeHtml(r.email||'—')}</b><div class="muted" style="font-size:11.5px;">${escapeHtml(this.roleLabel(r.role))} · approvals: ${Object.keys(r.approvals||{}).length}/${APPROVALS_NEEDED}</div></td>
+        <td style="font-size:12px;">${dev(r.device)}</td>
+        <td style="white-space:nowrap;">
+          <button class="btn btn-gold" style="padding:6px 12px;font-size:12.5px;" onclick="Auth.approve('${r.id}')">Approve</button>
+          <button class="btn btn-danger" style="padding:6px 12px;font-size:12.5px;" onclick="Auth.reject('${r.id}')">Reject</button>
+        </td></tr>`).join('') : `<tr><td colspan="3" class="muted">No pending requests.</td></tr>`;
+    const alertRows = alerts.length ? alerts.slice(0,100).map(a=>`<tr>
+        <td>${escapeHtml(a.tsClient? fmtDateTime(a.tsClient):'')}</td>
+        <td><b>${escapeHtml(a.type||'')}</b>${a.email?`<div class="muted" style="font-size:11.5px;">${escapeHtml(a.email)}</div>`:''}</td>
+        <td style="font-size:12px;">${dev(a.device)}</td>
+        <td><button class="btn btn-outline" style="padding:5px 10px;font-size:12px;" onclick="Auth.ackAlert('${a.id}')">Acknowledge</button></td>
+      </tr>`).join('') : `<tr><td colspan="4" class="muted">No unacknowledged red alerts.</td></tr>`;
+    const body = document.getElementById('arBody');
+    if(body) body.innerHTML = `
+      <div class="card"><h3>Pending access requests</h3>
+        <p class="muted" style="font-size:13px;">Both administrators must approve. Either rejection blocks the request and the device, and records a red alert.</p>
+        <div class="table-wrap"><table><thead><tr><th>Account</th><th>Device / location</th><th>Decision</th></tr></thead><tbody>${reqRows}</tbody></table></div>
+      </div>
+      <div class="card"><h3>Red alerts</h3>
+        <div class="table-wrap"><table><thead><tr><th>When</th><th>Event</th><th>Device / location</th><th></th></tr></thead><tbody>${alertRows}</tbody></table></div>
+      </div>`;
+  },
+  backToMyDashboard(){
+    if(this.me && this.me.role==='igsi') App.showIgsiDashboard('overview');
+    else if(this.me && this.me.role==='taskforce') App.showTaskforceDashboard();
+    else App.showLanding();
+  },
+  async approve(uid){
+    if(!this.me || !this.me.superAdmin) return;
+    try{
+      const ref = fsdb.collection(ADMIN_COL).doc(uid);
+      const snap = await ref.get(); if(!snap.exists) return;
+      const a = snap.data(); const approvals = Object.assign({}, a.approvals||{}); approvals[this.me.uid] = true;
+      const enough = Object.keys(approvals).length >= APPROVALS_NEEDED;
+      await ref.set(clean({ approvals, status: enough ? 'approved' : 'pending',
+        decidedAt: enough ? firebase.firestore.FieldValue.serverTimestamp() : null }), { merge:true });
+      await secLog('access_'+(enough?'approved':'approval_added'),'info',{ target: a.email, by: this.me.email });
+      secToast(enough ? 'Account approved' : 'Your approval recorded (waiting for the other admin)');
+    }catch(e){ secToast('Could not approve: '+(e&&e.message), false); }
+    this.refreshSuperBadge(); this.showAccessRequests();
+  },
+  async reject(uid){
+    if(!this.me || !this.me.superAdmin) return;
+    if(!confirm('Reject this request? The account is blocked and the device is added to the block list. A red alert is recorded.')) return;
+    try{
+      const ref = fsdb.collection(ADMIN_COL).doc(uid);
+      const snap = await ref.get(); if(!snap.exists) return;
+      const a = snap.data();
+      await ref.set(clean({ status:'rejected', decidedAt: firebase.firestore.FieldValue.serverTimestamp(), decidedBy: this.me.email }), { merge:true });
+      const devId = a.device && a.device.deviceId;
+      if(devId){
+        await fsdb.collection(BLOCK_COL).doc(devId).set(clean({
+          reason:'rejected access request', email:a.email, device:a.device,
+          ts: firebase.firestore.FieldValue.serverTimestamp(), byEmail:this.me.email }));
+      }
+      await secLog('access_rejected','red',{ target:a.email, by:this.me.email, device:a.device });
+      secToast('Request rejected and device blocked');
+    }catch(e){ secToast('Could not reject: '+(e&&e.message), false); }
+    this.refreshSuperBadge(); this.showAccessRequests();
+  },
+  async ackAlert(id){
+    try{ await fsdb.collection(SEC_LOG).doc(id).set({ ack:true }, { merge:true }); }catch(e){}
+    this.refreshSuperBadge(); this.showAccessRequests();
+  }
+};
+
+/* ============================================================
+   DECOY ADMIN PANEL
+   Reached only by the OLD leaked passwords. Looks like the real IGSI panel,
+   runs on throwaway fake data, writes NOTHING real, logs every action and
+   fires red alerts. Keeps an intruder busy and on the record.
+   ============================================================ */
+const Decoy = {
+  tab: 'overview',
+  fakeInst: [
+    { name:'International Islamic University, Islamabad (IIUI)', type:'university', reg:214, quiz:181, pass:77 },
+    { name:'National University of Modern Languages (NUML)', type:'university', reg:168, quiz:139, pass:71 },
+    { name:'Islamabad College for Boys (ICB) G-6/3', type:'school', reg:142, quiz:120, pass:66 },
+    { name:'Islamabad Model School for Girls (IMSG), Sohan', type:'school', reg:98, quiz:72, pass:69 },
+    { name:'National Skills University (NSU)', type:'university', reg:131, quiz:104, pass:74 }
+  ],
+  async sting(action, detail){
+    await secLog('decoy_action','red', Object.assign({ action }, detail||{}));
+  },
+  enter(role){
+    this.tab = 'overview';
+    this.render();
+    secToast('Welcome back');
+  },
+  render(){
+    const tabs = [['overview','Overview Dashboard'],['institutions','Venue Cryptography'],['questions','Question Bank ✏️'],['settings','Phase Toggle Gates'],['export','Export Utilities']];
+    App.setRoleIndicator('IGSI Campaign Operations Board');
+    const totalReg = this.fakeInst.reduce((a,i)=>a+i.reg,0), totalQuiz = this.fakeInst.reduce((a,i)=>a+i.quiz,0);
+    const pass = Math.round(this.fakeInst.reduce((a,i)=>a+i.pass,0)/this.fakeInst.length);
+    let inner = '';
+    if(this.tab==='overview'){
+      inner = `<div class="grid grid-4">
+          ${statTile(totalReg,'Students Registered')}
+          ${statTile(this.fakeInst.length+' / '+this.fakeInst.length,'Active Campus Assets')}
+          ${statTile(totalQuiz,'Evaluations Logged')}
+          ${statTile(pass+'%','Global Certification Yield', true)}
+        </div>
+        <div class="card"><h3>Campus Registry Metrics Table</h3>
+          <div class="table-wrap"><table><thead><tr><th>Institution</th><th>Type</th><th>Registered</th><th>Quiz</th><th>Yield</th></tr></thead>
+          <tbody>${this.fakeInst.map(i=>`<tr><td>${escapeHtml(i.name)}</td><td>${i.type.toUpperCase()}</td><td>${i.reg}</td><td>${i.quiz}</td><td>${i.pass}%</td></tr>`).join('')}</tbody></table></div>
+        </div>`;
+    } else if(this.tab==='institutions'){
+      inner = `<div class="card"><h3>Register Campus Assets</h3>
+          <div class="grid grid-4">
+            <div><label>Campus Venue Name</label><input type="text" id="dcName" placeholder="e.g. Quaid-i-Azam University"></div>
+            <div><label>Operational Domain</label><select><option>School / College Format</option><option>Higher Academic Format</option></select></div>
+            <div><label>Abbreviation</label><input type="text" placeholder="e.g. QAU"></div>
+            <div style="display:flex;align-items:flex-end;"><button class="btn btn-gold btn-block" onclick="Decoy.act('add_institution')">Inject Venue Asset</button></div>
+          </div></div>
+        <div class="card"><div class="flex-between"><h3>Focal Access Keys Registry</h3><span class="muted">${this.fakeInst.length} Asset Entities</span></div>
+          <div class="table-wrap"><table><thead><tr><th>Campus</th><th>Key</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>${this.fakeInst.map((i,idx)=>`<tr><td><b>${escapeHtml(i.name)}</b></td><td><span class="tag-key">HHP-${(1000+idx)}</span></td><td><span class="badge badge-pass">Active</span></td>
+            <td style="white-space:nowrap;">
+              <button class="btn btn-outline" style="padding:6px 12px;font-size:12.5px;" onclick="Decoy.act('regen_key','${escapeHtml(i.name)}')">Regenerate Block</button>
+              <button class="btn btn-outline" style="padding:6px 12px;font-size:12.5px;" onclick="Decoy.act('edit_institution','${escapeHtml(i.name)}')">Edit</button>
+              <button class="btn btn-danger" style="padding:6px 12px;font-size:12.5px;" onclick="Decoy.act('delete_institution','${escapeHtml(i.name)}')">Delete</button>
+            </td></tr>`).join('')}</tbody></table></div></div>`;
+    } else if(this.tab==='questions'){
+      inner = `<div class="card"><span class="eyebrow">Create New Question</span><h3>SDG Quiz — Add Question</h3>
+          <label>Question Text</label><textarea rows="2" id="dcQ" placeholder="Type the question statement…"></textarea>
+          <label>Answer Options (one per line)</label><textarea rows="4" placeholder="Option A&#10;Option B"></textarea>
+          <div class="btn-row"><button class="btn btn-gold" onclick="Decoy.act('add_question')">+ Add Question</button></div></div>
+        <div class="card"><div class="flex-between"><h3>SDG Quiz — Current Questions</h3><span class="muted">17 questions</span></div>
+          <div class="table-wrap"><table><thead><tr><th>#</th><th>Question</th><th>Actions</th></tr></thead><tbody>
+          ${['What does "SDG" stand for?','How many SDGs are there in total?','In which year were the SDGs adopted?'].map((q,i)=>`<tr><td>${i+1}</td><td><b>${escapeHtml(q)}</b></td>
+            <td style="white-space:nowrap;"><button class="btn btn-outline" style="padding:5px 10px;font-size:12px;" onclick="Decoy.act('edit_question')">Edit</button>
+            <button class="btn btn-danger" style="padding:5px 10px;font-size:12px;" onclick="Decoy.act('delete_question')">Delete</button></td></tr>`).join('')}
+          </tbody></table></div></div>`;
+    } else if(this.tab==='settings'){
+      inner = `<div class="card" style="max-width:640px;"><h3>Phase Toggle Gates</h3>
+          ${['Pre-Assessment','Post-Assessment','SDG Champion Quiz'].map(l=>`<div class="flex-between" style="padding:14px 0;border-bottom:1px solid var(--line);"><div style="font-weight:600;color:var(--forest-dark);">${l}</div>
+            <div class="seg-toggle"><button class="active-on" onclick="Decoy.act('gate_toggle','${l} ON')">ON</button><button onclick="Decoy.act('gate_toggle','${l} OFF')">OFF</button></div></div>`).join('')}</div>`;
+    } else if(this.tab==='export'){
+      inner = `<div class="card" style="max-width:520px;"><h3>Complete Database Array Export</h3>
+          <p class="muted">Extract complete demographic records to CSV.</p>
+          <button class="btn btn-gold" onclick="Decoy.act('export_csv')">⬇ Compile &amp; Download Spreadsheet Asset</button></div>`;
+    }
+    App.el(`
+      <div class="flex-between"><div><span class="eyebrow">IGSI Global Panel</span><h2>Campaign Administration</h2></div>
+        <button class="btn btn-outline no-print" onclick="Decoy.act('logout');App.showLanding();">Exit Panel</button></div>
+      <div class="pill-tabs no-print">${tabs.map(([k,l])=>`<div class="pill-tab ${this.tab===k?'active':''}" onclick="Decoy.go('${k}')">${l}</div>`).join('')}</div>
+      <div>${inner}</div>
+    `, 'decoy');
+  },
+  go(tab){ this.sting('open_tab', { tab }); this.tab = tab; this.render(); },
+  act(action, detail){
+    this.sting(action, detail?{target:detail}:{});
+    secToast('Saved ✓');
+  }
+};
+
+/* ============================================================
+   WIRE THE NEW LOGIN PATHS IN (overrides — original logic untouched)
+   ============================================================ */
+App.showIgsiLogin = function(){ Auth.showStaffLogin('igsi'); };
+App.showTaskforceLogin = function(){ Auth.showStaffLogin('taskforce'); };
+
+/* keep the shared admin password out of the published page-load record */
+try{
+  const _origBootDoc = bootDocData;
+  bootDocData = function(){ const d = _origBootDoc(); delete d.igsiPassword; delete d.taskforcePassword; return d; };
+}catch(e){}
+
+/* sign out of Firebase + tear down super-admin UI on logout */
+try{
+  const _origLogout = App.logout.bind(App);
+  App.logout = function(){
+    try{ if(fsauth && fsauth.currentUser) fsauth.signOut(); }catch(e){}
+    Auth.me = null; App.me = null; Auth.teardownSuperUi();
+    _origLogout();
+  };
+}catch(e){}
+
+/* light logging on the focal (campus-key) login, which is unchanged otherwise */
+try{
+  const _origFocal = App.submitFocalLogin.bind(App);
+  App.submitFocalLogin = async function(){
+    const r = await _origFocal();
+    try{ secLog('focal_login','info', { instId: App.state.focalInstitutionId }); }catch(e){}
+    return r;
+  };
+}catch(e){}
+
 
 App.showLanding();
 bootSync().then(applyInstrumentVersion);
