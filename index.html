@@ -2686,10 +2686,14 @@ const App = {
         </div>`;
     } else if(thisTab==='export'){
       content.innerHTML = `
-        <div class="card" style="max-width:520px;">
-          <h3>Complete Database Array Export</h3>
-          <p class="muted">Extract complete demographic multi-relational object tracks to machine-readable Comma-Separated Values (CSV) schemas.</p>
-          <button class="btn btn-gold" onclick="App.exportCsv()">⬇ Compile & Download Spreadsheet Asset</button>
+        <div class="card" style="max-width:660px;">
+          <span class="eyebrow">Data Export</span>
+          <h3>Download Full Student Dataset</h3>
+          <p class="muted">One row per student, grouped by institute: institute name, student name, class / program, section, gender, pre-assessment status, post-assessment status and quiz status (with score and certificate). Opens in Excel or Google Sheets.</p>
+          <div class="btn-row"><button class="btn btn-gold" onclick="App.exportFullDataset()">⬇ Download Full Dataset (CSV)</button></div>
+          <p class="muted" style="font-size:12.5px;margin-top:14px;">${DB.students.length} student record(s) in this read. This screen reads every record, so the file always matches the latest data.</p>
+          <hr style="border:none;border-top:1px solid var(--line);margin:18px 0;">
+          <button class="btn btn-outline" onclick="App.exportCsv()">⬇ Alternate layout (flat, first / middle / last split)</button>
         </div>`;
     }
   },
@@ -3001,6 +3005,41 @@ const App = {
     _institutionsDirty = true;
     saveData();
     this.showIgsiDashboard('institutions');
+  },
+  exportFullDataset(){
+    const rows = [['Institute Name','Student Name','Class / Program','Section','Gender','Pre-Assessment Status','Post-Assessment Status','Quiz Status','Quiz Score','Quiz %','Certificate']];
+    const insts = DB.institutions.slice().sort((a,b)=>a.name.localeCompare(b.name));
+    let n = 0;
+    insts.forEach(inst=>{
+      DB.students.filter(s=>s.institutionId===inst.id)
+        .sort((a,b)=>fullStudentName(a).localeCompare(fullStudentName(b)))
+        .forEach(stu=>{
+          const pre = DB.surveys.some(s=>s.studentId===stu.id && s.phase==='pre');
+          const post = DB.surveys.some(s=>s.studentId===stu.id && s.phase==='post');
+          const quiz = bestQuizFor(stu.id);
+          rows.push([
+            inst.name,
+            fullStudentName(stu) || '(no name)',
+            stu.className || '',
+            stu.sectionName || '',
+            stu.gender || '',
+            pre ? 'Completed' : 'Not completed',
+            post ? 'Completed' : 'Not completed',
+            quiz ? (quiz.passed ? 'Passed' : 'Not passed') : 'Not attempted',
+            quiz ? (quiz.score + '/' + quiz.total) : '',
+            quiz ? (quiz.pct + '%') : '',
+            (quiz && quiz.passed) ? 'Issued' : 'Not issued'
+          ]);
+          n++;
+        });
+    });
+    if(n === 0){ alert('No student records are loaded yet. This tab reads every record on open \u2014 wait for it to finish, then try again.'); return; }
+    const csv = '\ufeff' + rows.map(r => r.map(v => '"' + String(v==null?'':v).replace(/"/g,'""') + '"').join(',')).join('\r\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'HHP_Student_Dataset_' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click();
   },
   exportCsv(){
     const rows = [['First Name', 'Middle Name', 'Last Name', 'Gender Segment', 'Campus Institution', 'Domain Type', 'Class Tracking Designation', 'Section/Semester Term', 'Pre-Survey Completed', 'Post-Survey Completed', 'High Quiz Score Marks', 'Quiz Accumulative Percentage', 'Certification Delivery Status']];
