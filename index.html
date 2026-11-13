@@ -2686,14 +2686,18 @@ const App = {
         </div>`;
     } else if(thisTab==='export'){
       content.innerHTML = `
-        <div class="card" style="max-width:660px;">
+        <div class="card" style="max-width:680px;">
           <span class="eyebrow">Data Export</span>
-          <h3>Download Full Student Dataset</h3>
-          <p class="muted">One row per student, grouped by institute: institute name, student name, class / program, section, gender, pre-assessment status, post-assessment status and quiz status (with score and certificate). Opens in Excel or Google Sheets.</p>
-          <div class="btn-row"><button class="btn btn-gold" onclick="App.exportFullDataset()">⬇ Download Full Dataset (CSV)</button></div>
+          <h3>Download Master Dataset</h3>
+          <p class="muted">An Excel workbook with a <b>Summary</b> sheet (per-institute totals), an <b>All Students</b> master sheet, and <b>one sheet per institute</b>. Each student row carries institute, name, gender, level, class / program, section, and pre-assessment, post-assessment and quiz status (with score and certificate).</p>
+          <div class="btn-row"><button class="btn btn-gold" id="xlsxBtn" onclick="App.exportMasterExcel()">⬇ Download Master Dataset (Excel)</button></div>
           <p class="muted" style="font-size:12.5px;margin-top:14px;">${DB.students.length} student record(s) in this read. This screen reads every record, so the file always matches the latest data.</p>
           <hr style="border:none;border-top:1px solid var(--line);margin:18px 0;">
-          <button class="btn btn-outline" onclick="App.exportCsv()">⬇ Alternate layout (flat, first / middle / last split)</button>
+          <p class="muted" style="font-size:12.5px;">Prefer a single flat file?</p>
+          <div class="btn-row" style="margin-top:0;">
+            <button class="btn btn-outline" onclick="App.exportFullDataset()">⬇ Full dataset (CSV)</button>
+            <button class="btn btn-outline" onclick="App.exportCsv()">⬇ Flat layout (first / middle / last split)</button>
+          </div>
         </div>`;
     }
   },
@@ -4399,6 +4403,135 @@ try{
     return r;
   };
 }catch(e){}
+
+
+/* ============================================================
+   MASTER DATASET EXPORT (Excel .xlsx) — IGSI only
+   Builds a workbook: a Summary sheet (per-institute totals), an
+   "All Students" master sheet, and one sheet per institute. Uses SheetJS,
+   loaded on demand with CDN fallbacks; falls back to the CSV if it can't load.
+   ============================================================ */
+function ensureXlsx(cb){
+  if(window.XLSX){ cb(); return; }
+  const sources = [
+    'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+    'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+    'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js'
+  ];
+  let i = 0;
+  const tryNext = () => {
+    if(window.XLSX){ cb(); return; }
+    if(i >= sources.length){ cb(new Error('The Excel library could not be loaded (check your internet connection). You can still use the CSV download.')); return; }
+    const s = document.createElement('script');
+    s.src = sources[i++];
+    s.onload = () => { window.XLSX ? cb() : tryNext(); };
+    s.onerror = tryNext;
+    document.head.appendChild(s);
+  };
+  tryNext();
+}
+
+App.exportMasterExcel = function(){
+  if(!DB.students.length){
+    alert('No student records are loaded yet. This screen reads every record on open — wait for it to finish, then try again.');
+    return;
+  }
+  const btn = document.getElementById('xlsxBtn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Preparing Excel…'; }
+  const done = () => { if(btn){ btn.disabled = false; btn.innerHTML = '⬇ Download Master Dataset (Excel)'; } };
+
+  ensureXlsx(function(err){
+    if(err){ alert(err.message); done(); return; }
+    try{
+      const X = window.XLSX;
+      const insts = DB.institutions.slice().sort((a,b)=>a.name.localeCompare(b.name));
+
+      const rowFor = (inst, stu) => {
+        const pre  = DB.surveys.some(s=>s.studentId===stu.id && s.phase==='pre');
+        const post = DB.surveys.some(s=>s.studentId===stu.id && s.phase==='post');
+        const quiz = bestQuizFor(stu.id);
+        return {
+          'Institute': inst.name,
+          'Student Name': fullStudentName(stu) || '(no name)',
+          'Gender': stu.gender || '',
+          'Level': stu.level==='university' ? 'University' : 'School',
+          'Class / Program': stu.className || '',
+          'Section': stu.sectionName || '',
+          'Pre-Assessment': pre ? 'Completed' : 'Not completed',
+          'Post-Assessment': post ? 'Completed' : 'Not completed',
+          'Quiz Status': quiz ? (quiz.passed ? 'Passed' : 'Not passed') : 'Not attempted',
+          'Quiz Score': quiz ? (quiz.score + '/' + quiz.total) : '',
+          'Quiz %': quiz ? quiz.pct : '',
+          'Certificate': (quiz && quiz.passed) ? 'Issued' : 'Not issued'
+        };
+      };
+      const masterCols  = ['Institute','Student Name','Gender','Level','Class / Program','Section','Pre-Assessment','Post-Assessment','Quiz Status','Quiz Score','Quiz %','Certificate'];
+      const perInstCols = masterCols.filter(c => c !== 'Institute');
+      const widthsFor = cols => cols.map(c => ({ wch: c==='Institute'?34 : c==='Student Name'?26 : c==='Class / Program'?22 : (c.length+4) }));
+
+      const wb = X.utils.book_new();
+
+      /* ---- Summary sheet: per-institute totals ---- */
+      const summary = insts.map(inst => {
+        const studs = DB.students.filter(s=>s.institutionId===inst.id);
+        const ids = new Set(studs.map(s=>s.id));
+        const pre  = DB.surveys.filter(s=>s.phase==='pre'  && ids.has(s.studentId)).length;
+        const post = DB.surveys.filter(s=>s.phase==='post' && ids.has(s.studentId)).length;
+        const qz = studs.map(s=>bestQuizFor(s.id)).filter(Boolean);
+        const passed = qz.filter(q=>q.passed).length;
+        return {
+          'Institute': inst.name, 'Type': String(inst.type||'').toUpperCase(),
+          'Registered': studs.length, 'Pre-Assessment': pre, 'Post-Assessment': post,
+          'Quiz Attempts': qz.length, 'Quiz Passed': passed,
+          'Pass Rate %': qz.length ? Math.round(passed/qz.length*100) : 0,
+          'Archived': inst.archived ? 'Yes' : 'No'
+        };
+      });
+      const sum = k => summary.reduce((a,r)=>a + (r[k]||0), 0);
+      summary.push({ 'Institute':'TOTAL', 'Type':'', 'Registered':sum('Registered'),
+        'Pre-Assessment':sum('Pre-Assessment'), 'Post-Assessment':sum('Post-Assessment'),
+        'Quiz Attempts':sum('Quiz Attempts'), 'Quiz Passed':sum('Quiz Passed'), 'Pass Rate %':'', 'Archived':'' });
+      const sumCols = ['Institute','Type','Registered','Pre-Assessment','Post-Assessment','Quiz Attempts','Quiz Passed','Pass Rate %','Archived'];
+      const sumWs = X.utils.json_to_sheet(summary, { header: sumCols });
+      sumWs['!cols'] = widthsFor(sumCols);
+      X.utils.book_append_sheet(wb, sumWs, 'Summary');
+
+      /* ---- Master sheet: every student, grouped by institute ---- */
+      const masterRows = [];
+      insts.forEach(inst => {
+        DB.students.filter(s=>s.institutionId===inst.id)
+          .sort((a,b)=>fullStudentName(a).localeCompare(fullStudentName(b)))
+          .forEach(stu => masterRows.push(rowFor(inst, stu)));
+      });
+      const masterWs = X.utils.json_to_sheet(masterRows, { header: masterCols });
+      masterWs['!cols'] = widthsFor(masterCols);
+      X.utils.book_append_sheet(wb, masterWs, 'All Students');
+
+      /* ---- One sheet per institute (sheet names must be unique, <=31 chars) ---- */
+      const used = {};
+      const sheetName = raw => {
+        let base = String(raw||'Sheet').replace(/[\\\/\?\*\[\]:]/g,' ').replace(/\s+/g,' ').trim().slice(0,28) || 'Sheet';
+        let nm = base, k = 1;
+        while(used[nm.toLowerCase()]){ nm = (base.slice(0,24) + ' ' + (++k)); }
+        used[nm.toLowerCase()] = 1; return nm;
+      };
+      insts.forEach(inst => {
+        const studs = DB.students.filter(s=>s.institutionId===inst.id)
+          .sort((a,b)=>fullStudentName(a).localeCompare(fullStudentName(b)));
+        if(!studs.length) return;
+        const rows = studs.map(stu => { const r = rowFor(inst, stu); const o = {}; perInstCols.forEach(c=>o[c]=r[c]); return o; });
+        const ws = X.utils.json_to_sheet(rows, { header: perInstCols });
+        ws['!cols'] = widthsFor(perInstCols);
+        X.utils.book_append_sheet(wb, ws, sheetName(inst.abbr && inst.abbr.trim() ? inst.abbr.trim() : inst.name));
+      });
+
+      X.writeFile(wb, 'HHP_Master_Dataset_' + new Date().toISOString().slice(0,10) + '.xlsx');
+    }catch(e){
+      alert('Could not build the Excel file: ' + (e && e.message));
+    }
+    done();
+  });
+};
 
 
 App.showLanding();
